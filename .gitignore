@@ -1,0 +1,9 @@
+.env
+data/
+bin/
+coverage.out
+*.log
+web/node_modules/
+web/.next/
+web/*.tsbuildinfo
+web/.env*

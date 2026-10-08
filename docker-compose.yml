@@ -1,0 +1,100 @@
+name: newsbot
+x-app: &app
+  build: .
+  restart: unless-stopped
+  environment: &env
+    DATABASE_URL: postgres://newsbot:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/newsbot?sslmode=disable
+    REDIS_URL: redis://redis:6379/0
+    ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env}
+    AI_PROVIDER: ${AI_PROVIDER:-openai}
+    TTS_PROVIDER: ${TTS_PROVIDER:-}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    OPENAI_TEXT_MODEL: ${OPENAI_TEXT_MODEL:-gpt-4o-mini}
+    OPENAI_TTS_MODEL: ${OPENAI_TTS_MODEL:-gpt-4o-mini-tts}
+    OPENAI_VOICE: ${OPENAI_VOICE:-coral}
+    GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    GOOGLE_BASE_URL: ${GOOGLE_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+    GOOGLE_TEXT_MODEL: ${GOOGLE_TEXT_MODEL:-gemini-3.8-flash}
+    GOOGLE_TTS_MODEL: ${GOOGLE_TTS_MODEL:-gemini-3.8-flash-tts}
+    GOOGLE_VOICE: ${GOOGLE_VOICE:-Kore}
+    OUTPUT_DIR: /app/data/videos
+    HTTP_ADDR: 0.0.0.0:8080
+    COLLECT_INTERVAL: ${COLLECT_INTERVAL:-5m}
+  volumes:
+    - videos:/app/data/videos
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: newsbot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: newsbot
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U newsbot -d newsbot']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-bookworm
+    restart: unless-stopped
+    command: [redis-server, --appendonly, 'yes']
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  migrate:
+    <<: *app
+    restart: 'no'
+    command: [migrate]
+  api:
+    <<: *app
+    command: [api]
+    ports:
+      - '127.0.0.1:8080:8080'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  collector:
+    <<: *app
+    command: [collector]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  worker:
+    <<: *app
+    command: [worker]
+    stop_grace_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  web:
+    build: ./web
+    restart: unless-stopped
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env}
+      API_INTERNAL_URL: http://api:8080
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  postgres:
+  redis:
+  videos:
