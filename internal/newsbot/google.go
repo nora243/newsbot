@@ -88,16 +88,21 @@ func (a *AI) googleSpeech(ctx context.Context, p ProviderConfig, text string) ([
 	if err != nil {
 		return nil, err
 	}
+	part := map[string]any{"text": text}
+	if profile, ok := ctx.Value(speechContextKey{}).(SpeechProfile); ok && supportsVoiceDesign(p.TTSModel) {
+		p.Voice = profile.Voice
+		part["speech_metadata"] = map[string]string{"style": profile.Style}
+	}
 	voiceConfig := map[string]any{"voice": p.Voice}
 	// Earlier preview models use the prebuiltVoiceConfig field and return PCM.
 	if strings.HasPrefix(p.TTSModel, "gemini-2.5-") || strings.HasPrefix(p.TTSModel, "gemini-3.1-") {
 		voiceConfig = map[string]any{"prebuiltVoiceConfig": map[string]string{"voiceName": p.Voice}}
 	}
 	response, err := a.post(ctx, "google", p, path, map[string]any{
-		"contents": []map[string]any{{"role": "user", "parts": []map[string]string{{"text": text}}}},
+		"contents": []map[string]any{{"role": "user", "parts": []map[string]any{part}}},
 		"generationConfig": map[string]any{
 			"responseModalities": []string{"AUDIO"},
-			"speechConfig":       map[string]any{"voiceConfig": voiceConfig},
+			"speechConfig":       map[string]any{"voiceConfig": voiceConfig, "languageCode": "vi-VN"},
 		},
 	}, 32<<20)
 	if err != nil {

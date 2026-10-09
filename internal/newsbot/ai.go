@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -159,7 +160,24 @@ func (a *AI) Speech(ctx context.Context, text string) ([]byte, error) {
 		return nil, err
 	}
 	if provider == "google" {
-		return a.googleSpeech(ctx, p, text)
+		for attempt := 1; attempt <= 3; attempt++ {
+			audio, speechErr := a.googleSpeech(ctx, p, text)
+			if speechErr != nil {
+				return nil, speechErr
+			}
+			if !a.Config.GoogleVerifyVietnamese {
+				return audio, nil
+			}
+			valid, checkErr := a.verifyVietnameseAudio(ctx, audio)
+			if checkErr != nil {
+				return nil, fmt.Errorf("audio language check: %w", checkErr)
+			}
+			if valid {
+				return audio, nil
+			}
+			slog.Warn("TTS audio rejected: not Vietnamese", "attempt", attempt)
+		}
+		return nil, &AudioLanguageError{}
 	}
 	return a.post(ctx, provider, p, "/audio/speech", map[string]any{"model": p.TTSModel, "voice": p.Voice, "input": text, "response_format": "mp3"}, 20<<20)
 }

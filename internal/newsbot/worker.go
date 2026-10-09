@@ -101,13 +101,14 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 			if googleNewsArticle(article.URL) {
 				return "", 0, fmt.Errorf("bài %d đang dùng URL Google News; cần URL bài gốc để lấy nội dung và media chính xác", article.ID)
 			}
-			if (len(strings.Fields(article.Content)) >= 70 && internationalPublisher(article.URL) == "") || !isFullContentSupported(article.URL) {
+			if (len(strings.Fields(article.Content)) >= 70 && internationalPublisher(article.URL) == "" && !dantriURL(article.URL)) || !isFullContentSupported(article.URL) {
 				continue
 			}
 			content, fetchErr := fetchArticleContent(ctx, article.URL)
 			if fetchErr != nil {
 				return "", 0, fmt.Errorf("load full article %d: %w", article.ID, fetchErr)
 			}
+			slog.Info("full article loaded", "video_id", j.VideoID, "article_id", article.ID, "words", len(strings.Fields(content)))
 			// Preserve the original RSS text so existing evidence remains valid.
 			if !strings.Contains(article.Content, content) {
 				article.Content += "\n" + content
@@ -142,9 +143,21 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 	if err != nil {
 		return "", 0, fmt.Errorf("fact check: %w", err)
 	}
+	speechCtx := ctx
+	if w.AI.Config.speechProvider() == "google" && supportsVoiceDesign(w.AI.Config.Google.TTSModel) && w.AI.Config.TTSAutoStyle {
+		category, categoryErr := w.AI.speechCategory(ctx, script)
+		if categoryErr != nil {
+			return "", 0, fmt.Errorf("speech category: %w", categoryErr)
+		}
+		speechCtx, err = w.AI.prepareSpeech(ctx, w.Store, category)
+		if err != nil {
+			return "", 0, fmt.Errorf("voice design: %w", err)
+		}
+		slog.Info("speech profile selected", "video_id", j.VideoID, "category", category)
+	}
 	renderer := *w.Renderer
 	renderer.SelectedMedia = selectedMedia
-	return renderer.Render(ctx, j.VideoID, script, articles)
+	return renderer.Render(speechCtx, j.VideoID, script, articles)
 }
 func (w *Worker) Run(ctx context.Context) error {
 	for ctx.Err() == nil {

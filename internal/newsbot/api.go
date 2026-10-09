@@ -69,6 +69,8 @@ func (a *API) Handler() (http.Handler, error) {
 		respond(w, 200, s)
 	})
 	private.HandleFunc("POST /api/sources", a.addSource)
+	private.HandleFunc("GET /api/sources/export", a.exportSources)
+	private.HandleFunc("POST /api/sources/import", a.importSources)
 	private.HandleFunc("PATCH /api/sources/{id}", a.updateSource)
 	private.HandleFunc("POST /api/sources/{id}/collect", a.collectSource)
 	private.HandleFunc("GET /api/articles", func(w http.ResponseWriter, r *http.Request) {

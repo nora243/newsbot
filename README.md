@@ -137,7 +137,7 @@ docker compose run --rm collector collect
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" http://localhost:8080/api/articles
 ```
 
-Chọn 1–6 ID bài **cùng một sự kiện**, thay `[1,2]` bằng ID thực tế. RSS chỉ có mô tả ngắn có thể không đủ dữ kiện. Worker có thể bổ sung nội dung VnExpress và tải ảnh đại diện của bài được chọn để minh họa video.
+Chọn 1–6 ID bài **cùng một sự kiện**, thay `[1,2]` bằng ID thực tế. RSS chỉ có mô tả ngắn có thể không đủ dữ kiện. Worker có thể bổ sung nội dung từ các báo đã hỗ trợ (gồm VnExpress, Dân trí) và tải ảnh đại diện của bài được chọn để minh họa video.
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/videos \
@@ -265,3 +265,63 @@ Al Jazeera: khi VideoObject trong JSON-LD khớp tiêu đề h1 của bài, bộ
 Bước chọn media dùng ảnh xem trước JPEG tối đa 640×360, tải trễ và lưu cache; ảnh/video gốc vẫn giữ nguyên cho render. API giới hạn hai tác vụ tạo ảnh xem trước đồng thời. Video chỉ mở trình phát khi bấm Xem video, tối đa một trình phát tại một thời điểm; chọn tất cả hoặc tích checkbox không tải video gốc vào trình duyệt. Kiểm thử tương tác Chrome: sau `npm run build` trong thư mục `web`, chạy `NEWSBOT_BROWSER_TEST=1 node --test tests/media-picker.integration.mjs` (cần Google Chrome).
 
 Thanh Niên/VTV: quét vùng `detail-content[itemprop=articleBody]`, loại khối tin liên quan `RelatedOneNews`/`RelatedNewsBox`; đọc URL MP4/HLS của khối `VideoStream[data-vid]`, bổ sung HTTPS cho URL Thanh Niên thiếu scheme. Trang video VTV có player ngoài thân bài được đối chiếu `data-videoFocus-id` với ID trong URL bài, không lấy các player gợi ý. Kiểm chứng ngày 09/10/2026: ảnh và video Thanh Niên/Dân trí tải và giải mã thành công; ảnh VTV tải được, nhưng hai video mẫu VTV trả HTTP 400 từ CDN, RSS VTV trả 503 tại thời điểm kiểm tra. Phát hiện URL không đồng nghĩa CDN luôn cho tải. Kiểm thử live: `NEWSBOT_VI_MEDIA_URL=<URL> NEWSBOT_VI_MEDIA_VIDEO=1 go test ./internal/newsbot -run '^TestVietnameseLiveMedia$' -v` (cần FFmpeg).
+
+## Chuyển nguồn tin sang máy khác
+
+Ở mục **Nguồn tin**, chọn **Xuất JSON** để tải `newsbot-sources.json`. Trên máy đích, đăng nhập và chọn **Nhập JSON**, rồi chọn file đó. File có định dạng `newsbot-sources`, phiên bản 1; giữ tên, URL RSS, ngôn ngữ, chủ đề, bật/tắt, ghi chú quyền sử dụng và các cờ quyền dùng ảnh/video/quy nguồn.
+
+Nhập sẽ thêm nguồn mới và cập nhật cấu hình nguồn trùng URL RSS, bao gồm trạng thái bật/tắt; nguồn đã xóa có cùng URL được khôi phục. Nguồn ngoài file vẫn được giữ. Không chuyển ID nội bộ, lịch sử thu thập, bài viết, video hay khóa API. File được kiểm tra trước khi nhập toàn bộ trong một giao dịch; giới hạn 1 MiB và 1000 nguồn. Có thể nhập lại cùng file mà không tạo nguồn trùng.
+
+API quản trị: `GET /api/sources/export` tải JSON, `POST /api/sources/import` nhận chính nội dung JSON đó. Cả hai yêu cầu Bearer ADMIN_TOKEN.
+
+## Giọng đọc tự động theo chủ đề (Google 3.8 TTS)
+
+Với `TTS_PROVIDER=google` (hoặc AI_PROVIDER=google và TTS_PROVIDER trống) và `GOOGLE_TTS_MODEL=gemini-3.8-flash-tts` / `gemini-3.8-flash-lite-tts`, mặc định worker phân loại **kịch bản đã vượt kiểm tra dữ kiện** rồi chọn phong cách đọc. Phân loại dùng thêm một request text tới AI_PROVIDER, không chỉ dựa vào chủ đề nguồn RSS.
+
+- HEALTH: giọng nữ tiếng Việt ấm, đồng cảm; đọc chậm vừa, rõ thuật ngữ, không gây hoảng sợ.
+- TECHNOLOGY/SCIENCE/AUTO: giọng sáng, rõ, tò mò; nhịp linh hoạt vừa phải.
+- SPORTS: có năng lượng, nhấn kết quả, không hét.
+- BUSINESS/REAL_ESTATE: điềm tĩnh, rõ số liệu.
+- WORLD/VIETNAM/LAW/TOP_NEWS: nghiêm túc, tiết chế.
+- CHARITY: nhẹ nhàng, cảm thông; EDUCATION: kiên nhẫn, dễ hiểu.
+- ENTERTAINMENT/TRAVEL: gần gũi, tự nhiên; GENERAL: giọng bản tin trung tính.
+
+Voice Design gọi `/voices` để tạo `voice_...`; lưu ID trong PostgreSQL (`005_designed_voices.sql`) và dùng lại giữa các cảnh/video, kể cả khi worker khởi động lại. Cache phụ thuộc model, tài khoản API và prompt; đổi prompt/key/model sẽ tạo giọng khác. Cache làm mới sau 11 tháng. Google có giới hạn số giọng lưu và TTL; request tạo giọng/phân loại có thể phát sinh phí. Không tạo giọng mới cho từng cảnh. Cảm xúc được truyền riêng qua `speech_metadata.style`, giữ nguyên văn narration đã duyệt; mô tả giọng không chứng nhận độ chính xác y khoa.
+
+```dotenv
+TTS_AUTO_STYLE=true
+GOOGLE_VOICE_DESIGN=true
+# Dùng voice đã tạo ở Google AI Studio thì không gọi tạo giọng cho chủ đề đó:
+GOOGLE_VOICE_ID_HEALTH=voice_your_health_voice_id
+# Hoặc để ID trống để tự tạo; tùy chỉnh prompt và cách thể hiện:
+GOOGLE_VOICE_PROMPT_HEALTH=A professional Vietnamese female voice in her mid-30s with a warm, empathetic timbre and clear articulation.
+GOOGLE_SPEECH_STYLE_HEALTH=warm, calm and reassuring; moderate pacing and careful pronunciation
+```
+
+Các biến `GOOGLE_VOICE_ID_<CATEGORY>`, `GOOGLE_VOICE_PROMPT_<CATEGORY>`, `GOOGLE_SPEECH_STYLE_<CATEGORY>` hỗ trợ mọi category ở trên. `GOOGLE_VOICE_DESIGN=false` dùng GOOGLE_VOICE cùng style tự động, không tạo giọng mới. `TTS_AUTO_STYLE=false` tắt cả phân loại và chọn giọng tự động, trở về GOOGLE_VOICE. OpenAI TTS và model Google cũ giữ hành vi hiện tại. Lỗi tạo giọng dừng pipeline trước khi render; không âm thầm chuyển giọng/provider.
+
+Cập nhật có migration:
+
+```bash
+sudo docker compose build api worker migrate
+sudo docker compose run --rm migrate
+sudo docker compose up -d api worker
+```
+
+Log `speech profile selected` hiển thị chủ đề đã chọn. Video đã xuất giữ audio cũ; tạo video/bản sửa mới để áp dụng giọng đọc mới.
+
+Đối chiếu API: [Google Voice Design](https://ai.google.dev/gemini-api/docs/generate-content/voice-design), [Google TTS và speech_metadata](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation).
+
+### Nội dung đầy đủ từ Dân trí
+
+Worker lấy toàn văn bài Dân trí được chọn trước Generate, kể cả bài đã lưu chỉ có RSS hoặc mô tả trên 70 từ. Hỗ trợ URL HTTPS dantri.com.vn/www.dantri.com.vn với đường dẫn bài `.htm`; đọc vùng `#desktop-in-article` (giao diện mới) hoặc `.singular-content` (giao diện cũ). Bỏ quảng cáo, ảnh/chú thích, khối liên quan và trình phát; giới hạn trang 12 MiB, nội dung lưu 12.000 ký tự, timeout 30 giây và chặn IP nội bộ/redirect ngoài Dân trí. Giữ RSS ban đầu để không mất bằng chứng cũ và không thêm lại toàn văn nếu đã có.
+
+Log `full article loaded` có article_id và số từ đã lấy, không ghi toàn văn. Nếu lấy nội dung thất bại, báo `load full article` trước khi gọi AI. Tạo video mới để chạy bước này; video failed không tự chạy lại. Bộ trích xuất đã được kiểm tra trên bài về cà phê và gan trong báo cáo lỗi ngày 09/10/2026; vẫn giữ kiểm tra nguồn và không đảm bảo mọi kịch bản AI sẽ được chấp nhận.
+
+### Chặn audio Google TTS lệch ngôn ngữ
+
+Mọi request Google TTS gửi `speechConfig.languageCode=vi-VN`, kể cả giọng mặc định, Voice Design và khi tắt TTS_AUTO_STYLE. Mặc định `GOOGLE_VERIFY_VIETNAMESE=true`: sau mỗi cảnh, gửi audio WAV thật tới model Google hỗ trợ audio để phiên âm nguyên ngữ và kiểm tra toàn bộ lời kể tiếng Việt (cho phép tên riêng/chữ viết tắt nước ngoài trong câu tiếng Việt). Không gửi narration dự kiến cho checker để giảm nguy cơ nó sao chép kịch bản thay vì nghe audio.
+
+Nếu kiểm tra không đạt, tạo lại riêng cảnh đó tối đa 3 lần với cùng voice và languageCode; hết lượt thì dừng job, không ghép audio bị từ chối. Nếu checker lỗi hoặc không trả kết quả hợp lệ thì dừng lượt xử lý, không bỏ qua kiểm tra. Lỗi chỉ rõ `TTS cảnh 06` (đếm từ 1); log `TTS audio rejected: not Vietnamese` ghi lần tạo bị từ chối. Kiểm tra bằng AI có thể nhận định sai; chưa phải chứng nhận tuyệt đối về ngôn ngữ, nên vẫn nghe video ở bước duyệt.
+
+`GOOGLE_AUDIO_CHECK_MODEL` mặc định theo GOOGLE_TEXT_MODEL, phải hỗ trợ audio đầu vào và structured output. Có thêm một request hiểu audio mỗi cảnh (và các lượt tạo lại nếu sai tiếng), tăng chi phí/thời gian. `GOOGLE_VERIFY_VIETNAMESE=false` tắt checker, chỉ còn languageCode nên không nên dùng nếu yêu cầu chặn audio sai tiếng. Audio/video đã tạo trước đây không tự thay đổi; tạo bản sửa hoặc video mới để áp dụng. Không cần migration mới.

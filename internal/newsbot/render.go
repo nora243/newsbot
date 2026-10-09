@@ -136,7 +136,7 @@ func (r *Renderer) Render(ctx context.Context, id string, s Script, articles []A
 	for i, scene := range s.Scenes {
 		audio, err := r.Speaker.Speech(ctx, scene.Narration)
 		if err != nil {
-			return "", 0, err
+			return "", 0, fmt.Errorf("TTS cảnh %02d: %w", i+1, err)
 		}
 		// ffprobe/FFmpeg detect the container from bytes (OpenAI MP3 or Google WAV).
 		name := fmt.Sprintf("scene-%02d.audio", i)

@@ -21,3 +21,10 @@ test("proxy allows only supported API operations and safe IDs", () => {
   for (const [method, path] of [["GET", "overview"], ["GET", `media/${id}/preview`], ["GET", `videos/${id}/file`], ["POST", `videos/${id}/revisions`], ["PATCH", "sources/12"], ["DELETE", "sources/12"], ["POST", "sources/12/collect"]]) assert.equal(allowedPath(method, path), true);
   for (const [method, path] of [["GET", "../healthz"], ["GET", "media/invalid/preview"], ["GET", "https://example.com"], ["POST", "videos/invalid/review"], ["DELETE", "sources/0"], ["DELETE", `videos/${id}`], ["GET", "sources/1/collect"], ["POST", "sources/0/collect"]]) assert.equal(allowedPath(method, path), false);
 });
+
+test("source transfer routes use only their intended methods", () => {
+  assert.equal(allowedPath("GET", "sources/export"), true);
+  assert.equal(allowedPath("POST", "sources/import"), true);
+  assert.equal(allowedPath("GET", "sources/import"), false);
+  assert.equal(allowedPath("POST", "sources/export"), false);
+});

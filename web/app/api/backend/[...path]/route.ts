@@ -15,7 +15,7 @@ async function proxy(request: Request, context: { params: Promise<{ path: string
   let body;
   if (!readOnly) {
     body = await request.text();
-    if (body.length > 32768) return Response.json({ error: "Yêu cầu quá lớn" }, { status: 413 });
+    if (new TextEncoder().encode(body).length > (path === "sources/import" ? 1048576 : 32768)) return Response.json({ error: "Yêu cầu quá lớn" }, { status: 413 });
     headers["Content-Type"] = "application/json";
   }
   const articleParams = new URLSearchParams();
@@ -31,7 +31,7 @@ async function proxy(request: Request, context: { params: Promise<{ path: string
       method: request.method, headers, body, cache: "no-store", redirect: "error", signal: AbortSignal.timeout(path.startsWith("media/") ? 180000 : 45000),
     });
     const resultHeaders = new Headers({ "Cache-Control": "no-store" });
-    for (const key of ["content-type", "content-length", "content-range", "accept-ranges"]) {
+    for (const key of ["content-type", "content-length", "content-range", "accept-ranges", "content-disposition"]) {
       const value = upstream.headers.get(key); if (value) resultHeaders.set(key, value);
     }
     if (path.startsWith("videos/") && path.endsWith("/file") && upstream.ok) {

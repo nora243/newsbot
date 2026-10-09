@@ -94,7 +94,7 @@ func dwURL(raw string) bool {
 }
 
 func isFullContentSupported(raw string) bool {
-	return vnexpressURL(raw) || dwURL(raw) || internationalPublisher(raw) != ""
+	return vnexpressURL(raw) || dantriURL(raw) || dwURL(raw) || internationalPublisher(raw) != ""
 }
 
 func extractDW(r io.Reader) (string, error) {
@@ -165,7 +165,7 @@ func fetchArticleContent(ctx context.Context, raw string) (string, error) {
 	defer client.CloseIdleConnections()
 	redirect := client.CheckRedirect
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if !isFullContentSupported(req.URL.String()) {
+		if !isFullContentSupported(req.URL.String()) || (dantriURL(raw) && !dantriURL(req.URL.String())) {
 			return fmt.Errorf("bài viết chuyển hướng ngoài nguồn được hỗ trợ")
 		}
 		return redirect(req, via)
@@ -182,6 +182,9 @@ func fetchArticleContent(ctx context.Context, raw string) (string, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("bài gốc HTTP %d", resp.StatusCode)
+	}
+	if dantriURL(raw) {
+		return extractDanTri(resp.Body)
 	}
 	if vnexpressURL(raw) {
 		return extractVnExpress(resp.Body)

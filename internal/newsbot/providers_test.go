@@ -174,7 +174,8 @@ func TestGoogleSpeechFormats(t *testing.T) {
 					GenerationConfig struct {
 						ResponseModalities []string
 						SpeechConfig       struct {
-							VoiceConfig struct {
+							LanguageCode string
+							VoiceConfig  struct {
 								Voice               string
 								PrebuiltVoiceConfig struct{ VoiceName string }
 							}
@@ -186,6 +187,9 @@ func TestGoogleSpeechFormats(t *testing.T) {
 				}
 				if len(p.Contents) != 1 || p.Contents[0].Parts[0].Text != "Xin chào" || len(p.GenerationConfig.ResponseModalities) != 1 || p.GenerationConfig.ResponseModalities[0] != "AUDIO" {
 					t.Error("wrong speech request")
+				}
+				if p.GenerationConfig.SpeechConfig.LanguageCode != "vi-VN" {
+					t.Error("TTS language must be vi-VN")
 				}
 				v := p.GenerationConfig.SpeechConfig.VoiceConfig
 				if tc.name == "WAV" && v.Voice != "Kore" || tc.name == "PCM" && v.PrebuiltVoiceConfig.VoiceName != "Kore" {

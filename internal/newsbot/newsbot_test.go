@@ -270,7 +270,7 @@ func TestStoreIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var migrationCount int
-	if err = s.DB.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil || migrationCount != 4 {
+	if err = s.DB.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil || migrationCount != 5 {
 		t.Fatalf("migration ledger: %d %v", migrationCount, err)
 	}
 	changedDir := t.TempDir()

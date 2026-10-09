@@ -3,11 +3,16 @@ package newsbot
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type Config struct {
+	GoogleVerifyVietnamese                                 bool
+	GoogleAudioCheckModel                                  string
+	TTSAutoStyle, GoogleVoiceDesign                        bool
+	SpeechProfiles                                         map[string]SpeechProfile
 	DatabaseURL, RedisURL, AdminToken, OutputDir, HTTPAddr string
 	AIProvider, TTSProvider                                string
 	OpenAI, Google                                         ProviderConfig
@@ -85,6 +90,27 @@ func LoadConfig() (Config, error) {
 		HTTPAddr:  env("HTTP_ADDR", "127.0.0.1:8080"),
 	}
 	var err error
+	c.TTSAutoStyle, err = strconv.ParseBool(env("TTS_AUTO_STYLE", "true"))
+	if err != nil {
+		return c, fmt.Errorf("TTS_AUTO_STYLE phải là true/false")
+	}
+	c.GoogleVoiceDesign, err = strconv.ParseBool(env("GOOGLE_VOICE_DESIGN", "true"))
+	if err != nil {
+		return c, fmt.Errorf("GOOGLE_VOICE_DESIGN phải là true/false")
+	}
+	c.GoogleVerifyVietnamese, err = strconv.ParseBool(env("GOOGLE_VERIFY_VIETNAMESE", "true"))
+	if err != nil {
+		return c, fmt.Errorf("GOOGLE_VERIFY_VIETNAMESE phải là true/false")
+	}
+	c.GoogleAudioCheckModel = env("GOOGLE_AUDIO_CHECK_MODEL", c.Google.TextModel)
+	c.SpeechProfiles = map[string]SpeechProfile{}
+	for _, category := range speechCategories {
+		profile := defaultSpeechProfile(category)
+		profile.Voice = os.Getenv("GOOGLE_VOICE_ID_" + category)
+		profile.Prompt = env("GOOGLE_VOICE_PROMPT_"+category, profile.Prompt)
+		profile.Style = env("GOOGLE_SPEECH_STYLE_"+category, profile.Style)
+		c.SpeechProfiles[category] = profile
+	}
 	if _, err = c.provider(c.textProvider()); err != nil {
 		return c, err
 	}
