@@ -62,7 +62,7 @@ func TestPrivateAddressesBlocked(t *testing.T) {
 func fixture() ([]Article, Script) {
 	content := "Trung tâm thử nghiệm công bố hệ thống mới trong bản tin minh họa. Đây là dữ liệu giả lập để kiểm tra phần mềm, không phải tin thời sự có thật. Nội dung trình bày các bước kiểm tra hoạt động của hệ thống và cách lưu lại kết quả cho nhóm phát triển. Nhóm sẽ tiếp tục kiểm tra từng thành phần trước khi đưa hệ thống vào sử dụng."
 	a := []Article{{ID: 1, SourceID: 1, SourceName: "Nguồn thử nghiệm", Title: "Bản tin minh họa", Content: content, URL: "https://example.com/demo"}}
-	s := Script{Title: "Bản tin minh họa", Summary: "Dữ liệu kiểm thử", Claims: []Claim{{ID: "c1", Text: content, Evidence: []Evidence{{ArticleID: 1, Quote: "Trung tâm thử nghiệm công bố hệ thống mới"}}}}, Scenes: []Scene{{Narration: content, Subtitle: content, ClaimIDs: []string{"c1"}}, {Narration: content, Subtitle: content, ClaimIDs: []string{"c1"}}}}
+	s := Script{Title: "Bản tin minh họa", Summary: "Dữ liệu kiểm thử", Claims: []Claim{{ID: "c1", Text: content, Evidence: []Evidence{{ArticleID: 1, Quote: "Trung tâm thử nghiệm công bố hệ thống mới"}}}}, Scenes: []Scene{{Narration: content + " " + content, Subtitle: content + " " + content, ClaimIDs: []string{"c1"}}, {Narration: content + " " + content, Subtitle: content + " " + content, ClaimIDs: []string{"c1"}}}}
 	return a, s
 }
 func TestGroundingValidation(t *testing.T) {
@@ -158,9 +158,9 @@ func (s *rejectingSpeaker) Speech(ctx context.Context, text string) ([]byte, err
 }
 
 func (fakeSpeaker) Speech(ctx context.Context, text string) ([]byte, error) {
-	// A 12-second PCM WAV; ffprobe identifies it by bytes, regardless of extension.
+	// A 35-second PCM WAV; ffprobe identifies it by bytes, regardless of extension.
 	const rate = 16000
-	const size = rate * 12 * 2
+	const size = rate * 35 * 2
 	var b bytes.Buffer
 	b.WriteString("RIFF")
 	_ = binary.Write(&b, binary.LittleEndian, uint32(36+size))
@@ -185,14 +185,39 @@ func TestRenderIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, s := fixture()
-	r := Renderer{OutputDir: t.TempDir(), Speaker: fakeSpeaker{}}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	r := Renderer{OutputDir: t.TempDir(), Speaker: fakeSpeaker{}, PhotoLoader: testPhotoLoader, ClipLoader: testClipLoader}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	path, d, err := r.Render(ctx, strings.Repeat("a", 32), s, a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d != 24 {
+	if preview := os.Getenv("NEWSBOT_RENDER_PREVIEW"); preview != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(preview, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if os.Getenv("NEWSBOT_LIVE_PHOTO_URL") != "" || os.Getenv("NEWSBOT_TEST_PHOTO") == "1" {
+		photos, err := filepath.Glob(filepath.Join(filepath.Dir(path), "photo-*.jpg"))
+		if err != nil || len(photos) < 2 {
+			t.Fatalf("expected multiple article photos, got %d: %v", len(photos), err)
+		}
+	}
+	if os.Getenv("NEWSBOT_LIVE_CLIP_URL") != "" {
+		clips, err := filepath.Glob(filepath.Join(filepath.Dir(path), "clip-*", "clip.mp4"))
+		if err != nil || len(clips) == 0 {
+			t.Fatalf("video did not load: %v", err)
+		}
+		subtitles, err := os.ReadFile(filepath.Join(filepath.Dir(path), "subtitles.ass"))
+		if err != nil || !strings.Contains(string(subtitles), "VIDEO TỪ BÀI VIẾT") {
+			t.Fatal("video fell back to photos")
+		}
+	}
+	if d != 70 {
 		t.Fatalf("duration=%v", d)
 	}
 	if info, err := os.Stat(path); err != nil || info.Size() == 0 {
@@ -245,7 +270,7 @@ func TestStoreIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var migrationCount int
-	if err = s.DB.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil || migrationCount != 2 {
+	if err = s.DB.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil || migrationCount != 4 {
 		t.Fatalf("migration ledger: %d %v", migrationCount, err)
 	}
 	changedDir := t.TempDir()

@@ -35,7 +35,7 @@ func newID() string {
 }
 
 func (s *Store) Sources(ctx context.Context, activeOnly bool) ([]Source, error) {
-	rows, err := s.DB.Query(ctx, `SELECT id,name,rss_url,language,category,active,license_notes,last_error,last_fetched_at FROM news_sources WHERE (NOT $1 OR active) ORDER BY id`, activeOnly)
+	rows, err := s.DB.Query(ctx, `SELECT id,name,rss_url,language,category,active,license_notes,last_error,last_fetched_at FROM news_sources WHERE deleted_at IS NULL AND (NOT $1 OR active) ORDER BY id`, activeOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -51,11 +51,11 @@ func (s *Store) Sources(ctx context.Context, activeOnly bool) ([]Source, error) 
 	return out, rows.Err()
 }
 func (s *Store) SaveArticle(ctx context.Context, a Article) (bool, error) {
-	r, err := s.DB.Exec(ctx, `INSERT INTO news_articles(source_id,canonical_url,title,content,content_hash,published_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, a.SourceID, a.URL, a.Title, a.Content, a.Hash, a.PublishedAt)
+	r, err := s.DB.Exec(ctx, `INSERT INTO news_articles(source_id,canonical_url,title,content,content_hash,published_at) SELECT $1,$2,$3,$4,$5,$6 FROM news_sources WHERE id=$1 AND deleted_at IS NULL ON CONFLICT DO NOTHING`, a.SourceID, a.URL, a.Title, a.Content, a.Hash, a.PublishedAt)
 	return err == nil && r.RowsAffected() > 0, err
 }
 func (s *Store) Articles(ctx context.Context, ids []int64) ([]Article, error) {
-	rows, err := s.DB.Query(ctx, `SELECT a.id,a.source_id,s.name,a.canonical_url,a.title,a.content,a.published_at FROM news_articles a JOIN news_sources s ON s.id=a.source_id WHERE ($1::bigint[] IS NULL OR a.id=ANY($1)) ORDER BY a.collected_at DESC LIMIT 100`, ids)
+	rows, err := s.DB.Query(ctx, `SELECT a.id,a.source_id,s.name,a.canonical_url,a.title,a.content,COALESCE(a.published_at, a.collected_at) FROM news_articles a JOIN news_sources s ON s.id=a.source_id WHERE ($1::bigint[] IS NULL OR a.id=ANY($1)) ORDER BY COALESCE(a.published_at, a.collected_at) DESC, a.collected_at DESC, a.id DESC LIMIT 100`, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -70,11 +70,31 @@ func (s *Store) Articles(ctx context.Context, ids []int64) ([]Article, error) {
 	}
 	return out, rows.Err()
 }
-func (s *Store) Enqueue(ctx context.Context, ids []int64) (string, error) {
-	return s.enqueue(ctx, ids, nil, nil)
+func (s *Store) SearchArticles(ctx context.Context, query string, sourceIDs []int64, category string, offset int) ([]Article, error) {
+	rows, err := s.DB.Query(ctx, `SELECT a.id,a.source_id,s.name,a.canonical_url,a.title,a.content,COALESCE(a.published_at, a.collected_at)
+ FROM news_articles a JOIN news_sources s ON s.id=a.source_id
+ WHERE ($1='' OR strpos(lower(a.title),lower($1))>0)
+ AND ($2::bigint[] IS NULL OR cardinality($2)=0 OR a.source_id=ANY($2)) AND ($3='' OR s.category=$3)
+ ORDER BY COALESCE(a.published_at, a.collected_at) DESC, a.collected_at DESC, a.id DESC LIMIT 101 OFFSET $4`, query, sourceIDs, category, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Article{}
+	for rows.Next() {
+		var a Article
+		if err = rows.Scan(&a.ID, &a.SourceID, &a.SourceName, &a.URL, &a.Title, &a.Content, &a.PublishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+func (s *Store) Enqueue(ctx context.Context, ids []int64, media ...[]string) (string, error) {
+	return s.enqueue(ctx, ids, nil, nil, media...)
 }
 
-func (s *Store) EnqueueRevision(ctx context.Context, parentID string, articles []Article, draft Script) (string, error) {
+func (s *Store) EnqueueRevision(ctx context.Context, parentID string, articles []Article, draft Script, media ...[]string) (string, error) {
 	if err := draft.Validate(articles); err != nil {
 		return "", err
 	}
@@ -86,10 +106,10 @@ func (s *Store) EnqueueRevision(ctx context.Context, parentID string, articles [
 	if err != nil {
 		return "", err
 	}
-	return s.enqueue(ctx, ids, data, &parentID)
+	return s.enqueue(ctx, ids, data, &parentID, media...)
 }
 
-func (s *Store) enqueue(ctx context.Context, ids []int64, draft []byte, parentID *string) (string, error) {
+func (s *Store) enqueue(ctx context.Context, ids []int64, draft []byte, parentID *string, media ...[]string) (string, error) {
 	if len(ids) == 0 || len(ids) > 6 {
 		return "", fmt.Errorf("chọn 1–6 bài viết cùng sự kiện")
 	}
@@ -100,13 +120,20 @@ func (s *Store) enqueue(ctx context.Context, ids []int64, draft []byte, parentID
 		}
 		seen[id] = true
 	}
+	var mediaJSON []byte
+	if len(media) > 0 && media[0] != nil {
+		if err := s.ValidateMedia(ctx, ids, media[0]); err != nil {
+			return "", err
+		}
+		mediaJSON, _ = json.Marshal(media[0])
+	}
 	id := newID()
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `INSERT INTO videos(id,parent_id,draft_script,script) VALUES($1,$2,$3,$3)`, id, parentID, draft); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO videos(id,parent_id,draft_script,script,media_ids) VALUES($1,$2,$3,$3,$4)`, id, parentID, draft, mediaJSON); err != nil {
 		return "", err
 	}
 	for _, aid := range ids {
@@ -248,20 +275,29 @@ func (s *Store) Reap(ctx context.Context) error {
 }
 
 type Video struct {
-	ParentID   *string         `json:"parent_id"`
-	ID         string          `json:"id"`
-	Status     string          `json:"status"`
-	Script     json.RawMessage `json:"script"`
-	FactCheck  json.RawMessage `json:"fact_check"`
-	OutputPath *string         `json:"-"`
-	Duration   *float64        `json:"duration_seconds"`
-	LastError  *string         `json:"last_error"`
-	CreatedAt  time.Time       `json:"created_at"`
-	Sources    []Article       `json:"sources,omitempty"`
+	MediaIDs       []string        `json:"media_ids"`
+	PostingCaption string          `json:"posting_caption"`
+	ParentID       *string         `json:"parent_id"`
+	ID             string          `json:"id"`
+	Status         string          `json:"status"`
+	Script         json.RawMessage `json:"script"`
+	FactCheck      json.RawMessage `json:"fact_check"`
+	OutputPath     *string         `json:"-"`
+	Duration       *float64        `json:"duration_seconds"`
+	LastError      *string         `json:"last_error"`
+	CreatedAt      time.Time       `json:"created_at"`
+	Sources        []Article       `json:"sources,omitempty"`
 }
 
-func (s *Store) Videos(ctx context.Context, id string) ([]Video, error) {
-	rows, err := s.DB.Query(ctx, `SELECT id,status,script,fact_check,output_path,duration_seconds,last_error,created_at,parent_id FROM videos WHERE ($1='' OR id=$1) ORDER BY created_at DESC LIMIT 100`, id)
+func (s *Store) Videos(ctx context.Context, id string, filters ...string) ([]Video, error) {
+	query, status := "", ""
+	if len(filters) > 0 {
+		query = filters[0]
+	}
+	if len(filters) > 1 {
+		status = filters[1]
+	}
+	rows, err := s.DB.Query(ctx, `SELECT id,status,script,fact_check,output_path,duration_seconds,last_error,created_at,parent_id,media_ids FROM videos WHERE ($1='' OR id=$1) AND ($2='' OR strpos(lower(COALESCE(script->>'title','')),lower($2))>0) AND ($3='' OR status=$3) ORDER BY created_at DESC LIMIT 100`, id, query, status)
 	if err != nil {
 		return nil, err
 	}
@@ -269,8 +305,12 @@ func (s *Store) Videos(ctx context.Context, id string) ([]Video, error) {
 	out := []Video{}
 	for rows.Next() {
 		var v Video
-		if err = rows.Scan(&v.ID, &v.Status, &v.Script, &v.FactCheck, &v.OutputPath, &v.Duration, &v.LastError, &v.CreatedAt, &v.ParentID); err != nil {
+		if err = rows.Scan(&v.ID, &v.Status, &v.Script, &v.FactCheck, &v.OutputPath, &v.Duration, &v.LastError, &v.CreatedAt, &v.ParentID, &v.MediaIDs); err != nil {
 			return nil, err
+		}
+		var script Script
+		if json.Unmarshal(v.Script, &script) == nil {
+			v.PostingCaption = postingCaption(script)
 		}
 		out = append(out, v)
 	}

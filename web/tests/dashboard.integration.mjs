@@ -7,8 +7,9 @@ test("production dashboard login, authenticated proxy, video ranges and logout",
   const token = "integration-test-admin-token-32-chars";
   const id = "a".repeat(32);
   let upstreamCalls = 0;
+  let lastUpstreamURL = "";
   const backend = http.createServer(async (req, res) => {
-    upstreamCalls++;
+    upstreamCalls++; lastUpstreamURL = req.url;
     assert.equal(req.headers.authorization, `Bearer ${token}`);
     assert.equal(req.headers.cookie, undefined);
     if (req.url === `/api/videos/${id}/file`) {
@@ -48,13 +49,27 @@ test("production dashboard login, authenticated proxy, video ranges and logout",
     const headers = { Cookie: cookie, Origin: origin, "Content-Type": "application/json" };
     const overview = await fetch(`${origin}/api/backend/overview`, { headers }); assert.equal(overview.status, 200); assert.equal((await overview.json()).ai.provider, "google");
     assert.equal(overview.headers.get("cache-control"), "no-store");
+    const filters = new URLSearchParams({ q: "Hòa bình", source_id: "2", category: "WORLD", offset: "100" });
+    const articles = await fetch(`${origin}/api/backend/articles?${filters}&ignored=1`, { headers });
+    assert.equal(articles.status, 200);
+    assert.equal(lastUpstreamURL, `/api/articles?${filters}`);
+    const multiFilters = new URLSearchParams({ source_id: "1,2" });
+    const multiArticles = await fetch(`${origin}/api/backend/articles?${multiFilters}`, { headers });
+    assert.equal(multiArticles.status, 200);
+    assert.equal(lastUpstreamURL, `/api/articles?${multiFilters}`);
     const dashboard = await (await fetch(origin, { headers })).text(); assert.match(dashboard, /Một góc nhìn/); assert.equal(dashboard.includes(token), false);
     assert.equal((await fetch(`${origin}/api/backend/sources`, { method: "POST", headers: { ...headers, Origin: "https://other.example" }, body: "{}" })).status, 403);
     const revision = await fetch(`${origin}/api/backend/videos/${id}/revisions`, { method: "POST", headers, body: JSON.stringify({ script: { title: "Revised" } }) });
     assert.equal(revision.status, 200); assert.equal((await revision.json()).received.script.title, "Revised");
     const media = await fetch(`${origin}/api/backend/videos/${id}/file`, { headers: { ...headers, Range: "bytes=0-3" } });
     assert.equal(media.status, 206); assert.equal(media.headers.get("content-range"), "bytes 0-3/12"); assert.match(media.headers.get("content-disposition"), /inline/); assert.equal(await media.text(), "test");
+    const preview = await fetch(`${origin}/api/backend/media/${id}/preview`, { headers }); assert.equal(preview.status,200); assert.equal(preview.headers.get("content-disposition"),null); assert.equal(lastUpstreamURL,`/api/media/${id}/preview`);
     assert.equal((await fetch(`${origin}/api/backend/secrets`, { headers })).status, 404);
+    assert.equal((await fetch(`${origin}/api/backend/videos?q=Target&status=approved`, { headers })).status, 200);
+    assert.equal(lastUpstreamURL, "/api/videos?q=Target&status=approved");
+    assert.equal((await fetch(`${origin}/api/backend/sources/12`, { method: "DELETE", headers })).status, 200);
+    assert.equal(lastUpstreamURL, "/api/sources/12");
+    assert.equal((await fetch(`${origin}/api/backend/sources/12`, { method: "DELETE", headers: { ...headers, Origin: "https://foreign.example" } })).status, 403);
     const logout = await fetch(`${origin}/api/session`, { method: "DELETE", headers }); assert.equal(logout.status, 200); assert.match(logout.headers.get("set-cookie"), /newsbot_session=;/);
   } finally {
     server.kill("SIGTERM");

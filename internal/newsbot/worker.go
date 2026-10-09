@@ -87,6 +87,10 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 	if err != nil {
 		return "", 0, fmt.Errorf("load articles: %w", err)
 	}
+	selectedMedia, err := w.Store.ResolveVideoMedia(ctx, j.VideoID, w.Renderer.OutputDir)
+	if err != nil {
+		return "", 0, err
+	}
 	draft, err := w.Store.Draft(ctx, j.VideoID)
 	if err != nil {
 		return "", 0, err
@@ -94,7 +98,10 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 	if draft == nil {
 		for i := range articles {
 			article := &articles[i]
-			if len(strings.Fields(article.Content)) >= 70 || !vnexpressURL(article.URL) {
+			if googleNewsArticle(article.URL) {
+				return "", 0, fmt.Errorf("bài %d đang dùng URL Google News; cần URL bài gốc để lấy nội dung và media chính xác", article.ID)
+			}
+			if (len(strings.Fields(article.Content)) >= 70 && internationalPublisher(article.URL) == "") || !isFullContentSupported(article.URL) {
 				continue
 			}
 			content, fetchErr := fetchArticleContent(ctx, article.URL)
@@ -102,7 +109,9 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 				return "", 0, fmt.Errorf("load full article %d: %w", article.ID, fetchErr)
 			}
 			// Preserve the original RSS text so existing evidence remains valid.
-			article.Content += "\n" + content
+			if !strings.Contains(article.Content, content) {
+				article.Content += "\n" + content
+			}
 			if _, err = w.Store.DB.Exec(ctx, `UPDATE news_articles SET content=$1 WHERE id=$2`, article.Content, article.ID); err != nil {
 				return "", 0, err
 			}
@@ -133,7 +142,9 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 	if err != nil {
 		return "", 0, fmt.Errorf("fact check: %w", err)
 	}
-	return w.Renderer.Render(ctx, j.VideoID, script, articles)
+	renderer := *w.Renderer
+	renderer.SelectedMedia = selectedMedia
+	return renderer.Render(ctx, j.VideoID, script, articles)
 }
 func (w *Worker) Run(ctx context.Context) error {
 	for ctx.Err() == nil {

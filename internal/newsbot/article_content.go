@@ -88,17 +88,85 @@ func extractVnExpress(r io.Reader) (string, error) {
 	return text, nil
 }
 
-// Fetch only selected VnExpress articles, using the same public-IP restrictions as RSS.
+func dwURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.User == nil && u.Port() == "" && (u.Hostname() == "dw.com" || u.Hostname() == "www.dw.com") && strings.Contains(u.Path, "/a-")
+}
+
+func isFullContentSupported(raw string) bool {
+	return vnexpressURL(raw) || dwURL(raw) || internationalPublisher(raw) != ""
+}
+
+func extractDW(r io.Reader) (string, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxFeedBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > maxFeedBytes {
+		return "", fmt.Errorf("trang bài viết quá lớn")
+	}
+	root, err := html.Parse(strings.NewReader(string(data)))
+	if err != nil {
+		return "", err
+	}
+	var body *html.Node
+	var find func(*html.Node)
+	find = func(n *html.Node) {
+		if body != nil {
+			return
+		}
+		if n.Type == html.ElementNode && (n.Data == "article" || hasClass(n, "rich-text")) {
+			body = n
+			return
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			find(c)
+		}
+	}
+	find(root)
+	if body == nil {
+		return "", fmt.Errorf("không tìm thấy nội dung bài DW")
+	}
+	var paragraphs []string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && (n.Data == "script" || n.Data == "style" || n.Data == "figure" || n.Data == "aside" || n.Data == "nav" || hasClass(n, "advertisement") || hasClass(n, "vjs-wrapper")) {
+			return
+		}
+		if n.Type == html.ElementNode && n.Data == "p" {
+			var b strings.Builder
+			_ = html.Render(&b, n)
+			if text := plainText(b.String()); text != "" && !strings.Contains(text, "To view this video please enable JavaScript") {
+				paragraphs = append(paragraphs, text)
+			}
+			return
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(body)
+	text := strings.Join(paragraphs, "\n")
+	if len(strings.Fields(text)) < 70 {
+		return "", fmt.Errorf("nội dung bài gốc vẫn quá ngắn")
+	}
+	if len([]rune(text)) > 12000 {
+		text = string([]rune(text)[:12000])
+	}
+	return text, nil
+}
+
+// Fetch only selected supported articles, using the same public-IP restrictions as RSS.
 func fetchArticleContent(ctx context.Context, raw string) (string, error) {
-	if !vnexpressURL(raw) {
+	if !isFullContentSupported(raw) {
 		return "", fmt.Errorf("chưa hỗ trợ lấy nội dung đầy đủ từ nguồn này")
 	}
 	client := NewFeedClient()
 	defer client.CloseIdleConnections()
 	redirect := client.CheckRedirect
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if !vnexpressURL(req.URL.String()) {
-			return fmt.Errorf("bài viết chuyển hướng ngoài VnExpress")
+		if !isFullContentSupported(req.URL.String()) {
+			return fmt.Errorf("bài viết chuyển hướng ngoài nguồn được hỗ trợ")
 		}
 		return redirect(req, via)
 	}
@@ -115,5 +183,11 @@ func fetchArticleContent(ctx context.Context, raw string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("bài gốc HTTP %d", resp.StatusCode)
 	}
-	return extractVnExpress(resp.Body)
+	if vnexpressURL(raw) {
+		return extractVnExpress(resp.Body)
+	}
+	if dwURL(raw) {
+		return extractDW(resp.Body)
+	}
+	return extractInternational(resp.Body, raw)
 }

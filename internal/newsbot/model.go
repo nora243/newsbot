@@ -110,8 +110,8 @@ func (s Script) Validate(articles []Article) error {
 			}
 		}
 	}
-	if words < 70 || words > 240 {
-		return fmt.Errorf("lời đọc phải có 70–240 từ, nhận %d", words)
+	if words < 260 || words > 480 {
+		return fmt.Errorf("lời đọc phải có 260–480 từ, nhận %d", words)
 	}
 	return nil
 }

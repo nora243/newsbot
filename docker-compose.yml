@@ -1,7 +1,7 @@
 name: newsbot
 x-app: &app
   build: .
-  restart: unless-stopped
+  restart: "no"
   environment: &env
     DATABASE_URL: postgres://newsbot:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/newsbot?sslmode=disable
     REDIS_URL: redis://redis:6379/0
@@ -33,7 +33,7 @@ x-app: &app
 services:
   postgres:
     image: postgres:16-bookworm
-    restart: unless-stopped
+    restart: "no"
     environment:
       POSTGRES_USER: newsbot
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
@@ -47,7 +47,7 @@ services:
       retries: 20
   redis:
     image: redis:7-bookworm
-    restart: unless-stopped
+    restart: "no"
     command: [redis-server, --appendonly, 'yes']
     volumes:
       - redis:/data
@@ -83,7 +83,7 @@ services:
         condition: service_completed_successfully
   web:
     build: ./web
-    restart: unless-stopped
+    restart: "no"
     environment:
       ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env}
       API_INTERNAL_URL: http://api:8080

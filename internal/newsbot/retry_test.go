@@ -20,7 +20,7 @@ func TestJobRetryDelay(t *testing.T) {
 			t.Fatalf("terminal error retried: %v", err)
 		}
 	}
-	if jobRetryDelay(1, fmt.Errorf("temporary")) != 30*time.Second {
+	if jobRetryDelay(1, fmt.Errorf("temporary")) != 5*time.Second {
 		t.Fatal("ordinary retry changed")
 	}
 }

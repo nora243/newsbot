@@ -18,6 +18,6 @@ test("session expires, rejects tampering and contains no admin token", () => {
 
 test("proxy allows only supported API operations and safe IDs", () => {
   const id = "a".repeat(32);
-  for (const [method, path] of [["GET", "overview"], ["GET", `videos/${id}/file`], ["POST", `videos/${id}/revisions`], ["PATCH", "sources/12"], ["POST", "sources/12/collect"]]) assert.equal(allowedPath(method, path), true);
-  for (const [method, path] of [["GET", "../healthz"], ["GET", "https://example.com"], ["POST", "videos/invalid/review"], ["DELETE", "sources/1"], ["GET", "sources/1/collect"], ["POST", "sources/0/collect"]]) assert.equal(allowedPath(method, path), false);
+  for (const [method, path] of [["GET", "overview"], ["GET", `media/${id}/preview`], ["GET", `videos/${id}/file`], ["POST", `videos/${id}/revisions`], ["PATCH", "sources/12"], ["DELETE", "sources/12"], ["POST", "sources/12/collect"]]) assert.equal(allowedPath(method, path), true);
+  for (const [method, path] of [["GET", "../healthz"], ["GET", "media/invalid/preview"], ["GET", "https://example.com"], ["POST", "videos/invalid/review"], ["DELETE", "sources/0"], ["DELETE", `videos/${id}`], ["GET", "sources/1/collect"], ["POST", "sources/0/collect"]]) assert.equal(allowedPath(method, path), false);
 });

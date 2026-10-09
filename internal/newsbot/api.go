@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,16 +72,56 @@ func (a *API) Handler() (http.Handler, error) {
 	private.HandleFunc("PATCH /api/sources/{id}", a.updateSource)
 	private.HandleFunc("POST /api/sources/{id}/collect", a.collectSource)
 	private.HandleFunc("GET /api/articles", func(w http.ResponseWriter, r *http.Request) {
-		s, err := a.Store.Articles(r.Context(), nil)
+		q := r.URL.Query()
+		var sourceIDs []int64
+		rawSources := append(q["source_id"], q["source_ids"]...)
+		for _, raw := range rawSources {
+			for _, part := range strings.Split(raw, ",") {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				sid, err := strconv.ParseInt(part, 10, 64)
+				if err != nil || sid <= 0 {
+					respond(w, 400, map[string]string{"error": "Nguồn không hợp lệ"})
+					return
+				}
+				sourceIDs = append(sourceIDs, sid)
+			}
+		}
+		offset := 0
+		var err error
+		if raw := q.Get("offset"); raw != "" {
+			offset, err = strconv.Atoi(raw)
+			if err != nil || offset < 0 {
+				respond(w, 400, map[string]string{"error": "Vị trí trang không hợp lệ"})
+				return
+			}
+		}
+		query := strings.TrimSpace(q.Get("q"))
+		if len([]rune(query)) > 300 {
+			respond(w, 400, map[string]string{"error": "Từ khóa quá dài"})
+			return
+		}
+		s, err := a.Store.SearchArticles(r.Context(), query, sourceIDs, q.Get("category"), offset)
 		if err != nil {
 			a.internal(w, err)
 			return
 		}
 		respond(w, 200, s)
 	})
+	private.HandleFunc("DELETE /api/sources/{id}", a.deleteSource)
+	private.HandleFunc("POST /api/media/discover", a.discoverMedia)
+	private.HandleFunc("GET /api/media/{id}/file", a.mediaFile)
+	private.HandleFunc("GET /api/media/{id}/preview", a.mediaPreview)
 	private.HandleFunc("POST /api/videos", a.generate)
 	private.HandleFunc("GET /api/videos", func(w http.ResponseWriter, r *http.Request) {
-		s, err := a.Store.Videos(r.Context(), "")
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
+		if len([]rune(query)) > 300 {
+			failure(w, 400, "Từ khóa quá dài")
+			return
+		}
+		s, err := a.Store.Videos(r.Context(), "", query, r.URL.Query().Get("status"))
 		if err != nil {
 			a.internal(w, err)
 			return
@@ -114,7 +155,7 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		Failed        int `json:"failed"`
 	}
 	err := a.Store.DB.QueryRow(r.Context(), `SELECT
- (SELECT count(*) FROM news_sources), (SELECT count(*) FROM news_sources WHERE active), (SELECT count(*) FROM news_articles),
+ (SELECT count(*) FROM news_sources WHERE deleted_at IS NULL), (SELECT count(*) FROM news_sources WHERE active AND deleted_at IS NULL), (SELECT count(*) FROM news_articles),
  count(*), count(*) FILTER(WHERE status='pending_review'), count(*) FILTER(WHERE status IN('queued','processing')), count(*) FILTER(WHERE status='failed') FROM videos`).Scan(&stats.Sources, &stats.ActiveSources, &stats.Articles, &stats.Videos, &stats.PendingReview, &stats.Processing, &stats.Failed)
 	if err != nil {
 		a.internal(w, err)
@@ -182,7 +223,8 @@ func (a *API) revision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Script Script `json:"script"`
+		Script   Script   `json:"script"`
+		MediaIDs []string `json:"media_ids"`
 	}
 	if err := decode(w, r, &input); err != nil {
 		failure(w, 400, err.Error())
@@ -210,7 +252,20 @@ func (a *API) revision(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, err.Error())
 		return
 	}
-	id, err := a.Store.EnqueueRevision(r.Context(), videos[0].ID, articles, input.Script)
+	if input.MediaIDs == nil {
+		input.MediaIDs = videos[0].MediaIDs
+	}
+	ids := make([]int64, 0, len(articles))
+	for _, article := range articles {
+		ids = append(ids, article.ID)
+	}
+	if input.MediaIDs != nil {
+		if err := a.Store.ValidateMedia(r.Context(), ids, input.MediaIDs); err != nil {
+			failure(w, 400, err.Error())
+			return
+		}
+	}
+	id, err := a.Store.EnqueueRevision(r.Context(), videos[0].ID, articles, input.Script, input.MediaIDs)
 	if err != nil {
 		a.internal(w, err)
 		return
@@ -260,7 +315,7 @@ func (a *API) addSource(w http.ResponseWriter, r *http.Request) {
 		input.LicenseNotes = "Chưa xác nhận quyền sử dụng"
 	}
 	var id int64
-	err = a.Store.DB.QueryRow(r.Context(), `INSERT INTO news_sources(name,rss_url,language,category,license_notes) VALUES($1,$2,$3,$4,$5) ON CONFLICT(rss_url) DO NOTHING RETURNING id`, input.Name, u, input.Language, input.Category, input.LicenseNotes).Scan(&id)
+	err = a.Store.DB.QueryRow(r.Context(), `INSERT INTO news_sources(name,rss_url,language,category,license_notes) VALUES($1,$2,$3,$4,$5) ON CONFLICT(rss_url) DO UPDATE SET name=EXCLUDED.name,language=EXCLUDED.language,category=EXCLUDED.category,license_notes=EXCLUDED.license_notes,deleted_at=NULL,active=false WHERE news_sources.deleted_at IS NOT NULL RETURNING id`, input.Name, u, input.Language, input.Category, input.LicenseNotes).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		failure(w, 409, "nguồn RSS đã tồn tại")
 		return
@@ -284,7 +339,7 @@ func (a *API) updateSource(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, "ghi license_notes khi bật nguồn")
 		return
 	}
-	result, err := a.Store.DB.Exec(r.Context(), `UPDATE news_sources SET active=$1,license_notes=$2 WHERE id::text=$3`, input.Active, input.LicenseNotes, r.PathValue("id"))
+	result, err := a.Store.DB.Exec(r.Context(), `UPDATE news_sources SET active=$1,license_notes=$2 WHERE id::text=$3 AND deleted_at IS NULL`, input.Active, input.LicenseNotes, r.PathValue("id"))
 	if err != nil {
 		a.internal(w, err)
 		return
@@ -301,13 +356,14 @@ func (a *API) generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		ArticleIDs []int64 `json:"article_ids"`
+		ArticleIDs []int64  `json:"article_ids"`
+		MediaIDs   []string `json:"media_ids"`
 	}
 	if err := decode(w, r, &input); err != nil {
 		failure(w, 400, err.Error())
 		return
 	}
-	id, err := a.Store.Enqueue(r.Context(), input.ArticleIDs)
+	id, err := a.Store.Enqueue(r.Context(), input.ArticleIDs, input.MediaIDs)
 	if err != nil {
 		failure(w, 400, "chọn 1–6 ID bài viết có thật và không trùng")
 		return
@@ -404,4 +460,17 @@ func (a *API) file(w http.ResponseWriter, r *http.Request) {
 
 func HTTPServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 2 * time.Minute, IdleTimeout: 60 * time.Second}
+}
+
+func (a *API) deleteSource(w http.ResponseWriter, r *http.Request) {
+	result, err := a.Store.DB.Exec(r.Context(), `UPDATE news_sources SET deleted_at=now(),active=false WHERE id::text=$1 AND deleted_at IS NULL`, r.PathValue("id"))
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	if result.RowsAffected() == 0 {
+		failure(w, 404, "không có nguồn")
+		return
+	}
+	respond(w, 200, map[string]bool{"deleted": true})
 }

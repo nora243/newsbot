@@ -32,8 +32,9 @@ export function validSession(cookie, secret, now = Date.now()) {
 }
 
 export function allowedPath(method, path) {
-  if (method === "GET") return /^(overview|sources|articles|videos|videos\/[a-f0-9]{32}(\/file)?)$/.test(path);
-  if (method === "POST") return /^(sources|videos|sources\/[1-9][0-9]*\/collect|videos\/[a-f0-9]{32}\/(review|revisions))$/.test(path);
+  if (method === "GET") return /^(overview|sources|articles|media\/[a-f0-9]{32}\/(file|preview)|videos|videos\/[a-f0-9]{32}(\/file)?)$/.test(path);
+  if (method === "POST") return /^(sources|videos|media\/discover|sources\/[1-9][0-9]*\/collect|videos\/[a-f0-9]{32}\/(review|revisions))$/.test(path);
+  if (method === "DELETE") return /^sources\/[1-9][0-9]*$/.test(path);
   if (method === "PATCH") return /^sources\/[1-9][0-9]*$/.test(path);
   return false;
 }

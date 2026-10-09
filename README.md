@@ -26,11 +26,11 @@ Compose tự chạy migration trước các dịch vụ ứng dụng. PostgreSQL
 Mở **http://localhost:3000**, nhập giá trị `ADMIN_TOKEN` trong `.env` để đăng nhập.
 
 1. **Nguồn tin:** thêm RSS, mở Thiết lập để ghi quyền sử dụng và bật nguồn. Chọn Thu thập ngay để lấy tin mà không đợi lịch collector.
-2. **Tin đã thu thập:** tìm kiếm theo tiêu đề/nguồn, lọc chủ đề, chọn 1–6 bài cùng sự kiện rồi Tạo video.
+2. **Tin đã thu thập:** tìm kiếm theo tiêu đề trên toàn bộ database (chờ 400 ms sau khi ngừng gõ), chọn nguồn bằng danh sách riêng, lọc chủ đề, chọn 1–6 bài cùng sự kiện rồi Tạo video.
 3. **Sản xuất video:** theo dõi trạng thái, xem MP4 trực tiếp, đối chiếu kịch bản, dữ kiện, trích dẫn và bài gốc. Duyệt hoặc từ chối khi video ở trạng thái chờ duyệt. Có thể tải MP4.
 4. **Sửa kịch bản:** sửa tiêu đề và lời đọc từng cảnh, rồi Lưu và tạo phiên bản mới. Phụ đề đi theo lời đọc. Worker kiểm tra dữ kiện lại trước TTS/render; video trước đó giữ nguyên. Phiên bản mới vẫn cần duyệt.
 
-Danh sách tự cập nhật mỗi 10 giây khi tab trình duyệt đang mở, hiển thị tối đa 100 bài/video gần nhất. Tổng quan hiển thị số lượng toàn database và nhà cung cấp AI đang dùng. Đổi AI vẫn qua `.env`.
+Danh sách và chi tiết video không tự tải lại theo chu kỳ. Dùng nút **Làm mới** để cập nhật dữ liệu và trạng thái video đang mở; tìm kiếm vẫn chờ 400 ms sau khi ngừng gõ. Danh sách phân trang tin với 100 bài mỗi trang sau khi lọc, hiển thị tối đa 100 video gần nhất. Tổng quan hiển thị số lượng toàn database và nhà cung cấp AI đang dùng. Đổi AI vẫn qua `.env`.
 
 `WEB_ORIGIN` mặc định `http://localhost:3000`. Nếu mở bằng `http://127.0.0.1:3000`, hãy đặt `WEB_ORIGIN=http://127.0.0.1:3000` rồi tạo lại container web. Origin phải khớp địa chỉ trên trình duyệt để đăng nhập và gửi thao tác. Khi dùng reverse proxy, đặt WEB_ORIGIN thành địa chỉ HTTPS của dashboard.
 
@@ -51,6 +51,14 @@ docker compose up -d
 Không dùng `docker compose down -v` khi nâng cấp vì tùy chọn đó xóa volumes.
 
 Các nguồn mẫu **chưa bật**. Xem và bật từng nguồn qua API sau khi kiểm tra quyền sử dụng. RSS VnExpress có điều khoản riêng cho cá nhân/tổ chức phi lợi nhuận; không mặc định nguồn RSS cho phép sản xuất video thương mại. Xem [trang RSS và điều khoản VnExpress](https://vnexpress.net/rss). Thêm nguồn bạn được phép sử dụng thay vì phụ thuộc vào danh sách báo cố định.
+
+## Giao diện video So Híp
+
+Video mới dùng khung dọc 1080×1920: logo So Híp màu vàng chanh, nền đen xanh, đường nhấn cam, tiêu đề ở trên, ảnh lớn ở giữa, phụ đề chia cụm tối đa 7 từ ở dưới. Chữ chính nằm trong vùng x=72–876, phía trên y=1640 để chừa khoảng cho giao diện TikTok; hãy kiểm tra lại trong màn hình đăng vì lớp phủ thay đổi theo thiết bị và độ dài mô tả. Thanh tiến trình và số cảnh giúp người xem theo dõi bản tin.
+
+Renderer ưu tiên ảnh trong nội dung bài có bằng chứng của cảnh, đọc cả ảnh tải trễ (`data-src`, `data-original`) và biến thể độ phân giải cao trong `picture`/`srcset`; dự phòng bằng `og:image`/`twitter:image`. Tải tối đa 6 ảnh mỗi bài, thử địa chỉ khác nếu ảnh lỗi và luân phiên ảnh qua các cảnh của cùng bài, với chuyển động phóng nhẹ. Ảnh minh họa theo bài, chưa tự đối chiếu ý nghĩa từng ảnh với lời đọc. Chỉ nhận JPEG/PNG/WebP hợp lệ, tối đa 10 MiB/24 megapixel; giới hạn thời gian và chặn mạng nội bộ cả khi redirect. Khi bài không có ảnh hoặc tải ảnh thất bại, dùng thẻ dữ kiện có dẫn nguồn. Ảnh lấy từ bài có thể chỉ minh họa toàn bài; người duyệt cần kiểm tra sự phù hợp với từng cảnh và quyền tái sử dụng ảnh. Với Dân trí, chỉ lấy ảnh trong nội dung chính, gộp các kích thước của cùng ảnh và dùng ảnh đại diện khi không có ảnh nội dung tải được. Video Dân trí được đối chiếu `data-video-id` với `VideoObject` trong JSON-LD để lấy đúng URL HLS, thay vì dùng đường dẫn `.mov` tương đối. Ưu tiên video MP4 hoặc HLS trong thẻ `video`/`source` hoặc metadata đã đối chiếu của bài, sau đó mới dùng ảnh và thẻ tin. Hỗ trợ HLS MPEG-TS và AES-128 với khóa công khai của trình phát; chưa hỗ trợ iframe bên thứ ba, DRM, HLS fMP4/byte-range. Tải tối đa 90 giây đầu và 120 MiB mỗi bài, cắt các đoạn nối tiếp theo cảnh, lặp lại nếu clip ngắn hơn lời đọc. Giữ tỷ lệ hình trong khung, tắt tiếng nguồn và dùng giọng đọc bản tin. Mọi playlist, khóa và phân đoạn đều được tải qua HTTP client chặn mạng nội bộ; FFmpeg chỉ đọc bản cục bộ.
+
+Chạy `docker compose up --build -d` rồi tạo video mới hoặc lưu kịch bản thành phiên bản mới để áp dụng giao diện. MP4 đã dựng giữ nguyên. Không cần thêm khóa API ảnh.
 
 ## Chọn Google hoặc OpenAI
 
@@ -129,7 +137,7 @@ docker compose run --rm collector collect
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" http://localhost:8080/api/articles
 ```
 
-Chọn 1–6 ID bài **cùng một sự kiện**, thay `[1,2]` bằng ID thực tế. RSS chỉ có mô tả ngắn có thể không đủ dữ kiện. Không tự tải nội dung trang báo, ảnh hoặc video của nguồn.
+Chọn 1–6 ID bài **cùng một sự kiện**, thay `[1,2]` bằng ID thực tế. RSS chỉ có mô tả ngắn có thể không đủ dữ kiện. Worker có thể bổ sung nội dung VnExpress và tải ảnh đại diện của bài được chọn để minh họa video.
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/videos \
@@ -156,7 +164,7 @@ curl -sS -X POST "http://localhost:8080/api/videos/$VIDEO_ID/review" \
   -d '{"decision":"approved"}'
 ```
 
-Từ chối bằng `decision=rejected`. Duyệt chỉ thay trạng thái, **không đăng lên TikTok**. Các trạng thái: `queued → processing → pending_review → approved/rejected`; lỗi tạm thời được thử tối đa 3 lần, sau đó `failed`. Lỗi HTTP 4xx từ AI (trừ 408/429) chuyển ngay sang `failed` vì gửi lại cùng request không khắc phục được lỗi. Xem `last_error` và log worker khi pipeline dừng. Render chỉ cho thời lượng 20–90 giây; mục tiêu prompt là 45–60 giây.
+Từ chối bằng `decision=rejected`. Duyệt chỉ thay trạng thái, **không đăng lên TikTok**. Các trạng thái: `queued → processing → pending_review → approved/rejected`; lỗi tạm thời được thử tối đa 3 lần, sau đó `failed`. Lỗi HTTP 4xx từ AI (trừ 408/429) chuyển ngay sang `failed` vì gửi lại cùng request không khắc phục được lỗi. Xem `last_error` và log worker khi pipeline dừng. Video phải dài hơn 60 giây và tối đa 180 giây; mục tiêu kịch bản là 75–120 giây với 260–480 từ (đếm theo khoảng trắng). Thời lượng được đo từ giọng đọc thực tế; video ngắn hơn yêu cầu sẽ báo lỗi, không chèn khoảng im lặng để kéo dài.
 
 ## Cấu trúc
 
@@ -215,7 +223,7 @@ Test integration web dùng Next.js production và Go API giả lập trên local
 
 ## Phạm vi tiếp theo
 
-Chưa có semantic clustering/pgvector, kiểm chứng ngoài các bài đầu vào, asset có bản quyền, R2, TikTok OAuth/publishing hoặc analytics. Người biên tập vẫn chọn các bài cùng sự kiện. Pipeline hiện dùng một template chữ + nền màu; phụ đề chia cụm từ, thời gian trong cảnh được ước lượng theo số từ, chưa có forced alignment. Mỗi video luôn cần người duyệt.
+Chưa có semantic clustering/pgvector, kiểm chứng ngoài các bài đầu vào, asset có bản quyền, R2, TikTok OAuth/publishing hoặc analytics. Người biên tập vẫn chọn các bài cùng sự kiện. Pipeline dùng template So Híp với ảnh đại diện bài viết chuyển động nhẹ và thẻ tin dự phòng; phụ đề chia cụm từ, thời gian trong cảnh được ước lượng theo số từ, chưa có forced alignment. Mỗi video luôn cần người duyệt.
 
 OpenAI adapter đối chiếu với tài liệu [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs) và [Create speech](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create). JSON schema và kiểm tra quote giúp chặn bằng chứng bịa; chúng không chứng minh thông tin ngoài đời là đúng.
 
@@ -227,6 +235,33 @@ Log mới và `last_error` hiển thị bước thất bại, endpoint/model, m�
 
 Nếu AI trả `claims=[]` và `scenes=[]`, worker báo nguồn chưa đủ dữ kiện và dừng job thay vì gọi lại cùng đầu vào. Hãy chọn thêm bài liên quan có nội dung đủ dài. Bộ đọc feed ưu tiên RSS `content:encoded` và Atom `content`, rồi mới dùng mô tả/tóm tắt; worker hỗ trợ tải nội dung bài VnExpress được chọn khi nội dung đang lưu dưới 70 từ. Bài đã lưu trước khi cập nhật vẫn giữ nội dung cũ. Kịch bản không đạt kiểm tra được lưu để chẩn đoán và không đưa sang TTS/render.
 
-Lỗi AI HTTP 429/5xx được chờ 2 phút trước lần 2, 4 phút trước lần 3; các lỗi tạm thời khác chờ 30 giây. Log `video retry scheduled` kèm `retry_after` nghĩa là job còn queued; `video failed` chỉ xuất hiện khi kết thúc. Không tự đổi model/provider. Backoff không đảm bảo model hết quá tải.
+Lỗi AI HTTP 429/5xx được chờ 2 phút trước lần 2, 4 phút trước lần 3; các lỗi tạm thời khác chờ 5 giây. Log `video retry scheduled` kèm `retry_after` nghĩa là job còn queued; `video failed` chỉ xuất hiện khi kết thúc. Không tự đổi model/provider. Backoff không đảm bảo model hết quá tải.
 
-Tạo video từ một bài VnExpress: worker bổ sung các đoạn nội dung chính từ trang bài gốc nếu RSS đang lưu dưới 70 từ, giữ lại mô tả ban đầu để không mất bằng chứng. Chỉ tải bài được chọn, HTTPS trên vnexpress.net/www.vnexpress.net, chặn redirect ngoài nguồn và IP nội bộ, giới hạn 4 MiB/30 giây. Nếu tải/trích xuất thất bại, log `load full article` và không gọi AI/TTS. Nguồn khác vẫn dùng nội dung feed. Bài có nội dung đủ dài vẫn phải vượt kiểm tra dữ kiện.
+Tạo video từ một bài VnExpress: worker bổ sung các đoạn nội dung chính từ trang bài gốc nếu RSS đang lưu dưới 70 từ, giữ lại mô tả ban đầu để không mất bằng chứng. Chỉ tải bài được chọn, HTTPS trên vnexpress.net/www.vnexpress.net, chặn redirect ngoài nguồn và IP nội bộ, giới hạn HTML 12 MiB/30 giây. Nếu tải/trích xuất thất bại, log `load full article` và không gọi AI/TTS. Các nguồn được hỗ trợ khác được mô tả ở phần Các nguồn quốc tế bên dưới. Bài có nội dung đủ dài vẫn phải vượt kiểm tra dữ kiện.
+
+
+### Các nguồn quốc tế
+
+Bộ đọc chi tiết hỗ trợ bài BBC News, Guardian (kể cả live blog), CNN và phần nội dung công khai của NYTimes. Worker tải trang gốc của các nguồn này khi tạo kịch bản thay vì coi mô tả RSS là bài đầy đủ; giữ lại mô tả để bảo toàn bằng chứng. HTML bài có giới hạn riêng 12 MiB, RSS vẫn 4 MiB; URL và các lượt chuyển hướng vẫn bị chặn IP nội bộ. Nếu nguồn chặn truy cập hoặc chỉ có video mà thiếu nội dung đủ dài, job dừng trước AI/TTS và báo lỗi, không suy đoán nội dung.
+
+Quét media loại vùng tin liên quan và thông tin tác giả; nhóm các kích thước/định dạng của cùng ảnh BBC; giữ dấu phẩy trong URL biến đổi ảnh CNN. Video MP4/HLS trong JSON-LD chỉ được nhận khi metadata xác định đúng trang bài đang chọn. Trình phát chỉ cung cấp embed (như BBC mẫu đã kiểm tra) hiển thị cảnh báo trong bước chọn media; chưa hỗ trợ lấy stream qua API trình phát hoặc vượt trang yêu cầu đăng nhập/JavaScript. RSS NYTimes có cả `link` và `atom:link`; bộ đọc giữ URL của thẻ RSS để tránh bỏ mất bài.
+
+
+ABC News hỗ trợ vùng `prism-article-body`/`Article__Content`, loại các khối `prism-collection` (tin gợi ý) và quảng cáo. Al Jazeera hỗ trợ vùng `wysiwyg--all-content`. Ảnh trong bài và ảnh đại diện được đưa vào bước chọn media. Native video và metadata MP4/HLS khớp trang dùng chung bộ quét; trình phát riêng của ABC chưa được hỗ trợ sẽ hiển thị cảnh báo. Al Jazeera/Brightcove được hỗ trợ qua playback công khai như mô tả bên dưới.
+
+Reuters: adapter nội dung nhận vùng `article-body`/`ArticleBody` trên URL Reuters trực tiếp; chưa xác minh trên trang thực tế vì trang mẫu trả challenge JavaScript. Nguồn Google News RSS hiện lưu URL `news.google.com/rss/articles/...`, không phải URL Reuters. Hệ thống không dùng nội dung hoặc ảnh thẻ Google News làm bài gốc: bước chọn media báo thiếu URL gốc, worker dừng và yêu cầu URL bài gốc. Chưa hỗ trợ phân giải các token Google News hoặc vượt challenge Reuters.
+
+
+Trang Nguồn tin có tìm kiếm theo tên/URL và lọc trạng thái, khung thêm/thiết lập nguồn cố định khi cuộn. Nút Xóa nguồn yêu cầu xác nhận, dừng thu thập và ẩn nguồn khỏi danh sách; bài và video cũ được giữ để bảo toàn dẫn nguồn. Thêm lại cùng URL RSS sẽ khôi phục nguồn ở trạng thái tắt. Migration `004_source_deletion.sql` bổ sung cột `deleted_at`. API quản lý dùng `DELETE /api/sources/{id}`.
+
+Trang Sản xuất video tìm tiêu đề trong toàn bộ DB qua `GET /api/videos?q=...&status=...`, chờ 400 ms khi nhập và trả tối đa 100 kết quả mới nhất khớp bộ lọc.
+
+
+Khi có video queued/processing, giao diện kiểm tra trạng thái mỗi 10 giây trong nền và tạm ngừng khi tab trình duyệt bị ẩn. Chỉ cập nhật video/tổng quan; không tải lại danh sách bài viết, không bật loading và không đặt lại bản nháp hay vị trí cuộn. Khi không còn video sản xuất, tự dừng kiểm tra định kỳ. Trang video Al Jazeera có thân bài trống được dùng mô tả công khai ở `article__subhead`; không giả định có bản chép lời hoặc nội dung video chưa được đọc. Kịch bản tổng hợp vẫn phải đạt kiểm tra dữ kiện và độ dài.
+
+
+Al Jazeera: khi VideoObject trong JSON-LD khớp tiêu đề h1 của bài, bộ quét đọc cấu hình public Brightcove và Playback API của đúng account/videoId để lấy MP4/HLS. Các độ phân giải gộp vào một mục video, ưu tiên MP4. Chỉ dùng HTTPS, loại nguồn DRM và kiểm tra ID trả về; mọi lần tải vẫn qua client chặn IP nội bộ, giới hạn dung lượng/thời gian và FFmpeg chỉ xử lý file cục bộ. Trường hợp cần xác thực hoặc bị giới hạn truy cập vẫn báo cảnh báo, không vượt các giới hạn đó.
+
+Bước chọn media dùng ảnh xem trước JPEG tối đa 640×360, tải trễ và lưu cache; ảnh/video gốc vẫn giữ nguyên cho render. API giới hạn hai tác vụ tạo ảnh xem trước đồng thời. Video chỉ mở trình phát khi bấm Xem video, tối đa một trình phát tại một thời điểm; chọn tất cả hoặc tích checkbox không tải video gốc vào trình duyệt. Kiểm thử tương tác Chrome: sau `npm run build` trong thư mục `web`, chạy `NEWSBOT_BROWSER_TEST=1 node --test tests/media-picker.integration.mjs` (cần Google Chrome).
+
+Thanh Niên/VTV: quét vùng `detail-content[itemprop=articleBody]`, loại khối tin liên quan `RelatedOneNews`/`RelatedNewsBox`; đọc URL MP4/HLS của khối `VideoStream[data-vid]`, bổ sung HTTPS cho URL Thanh Niên thiếu scheme. Trang video VTV có player ngoài thân bài được đối chiếu `data-videoFocus-id` với ID trong URL bài, không lấy các player gợi ý. Kiểm chứng ngày 09/10/2026: ảnh và video Thanh Niên/Dân trí tải và giải mã thành công; ảnh VTV tải được, nhưng hai video mẫu VTV trả HTTP 400 từ CDN, RSS VTV trả 503 tại thời điểm kiểm tra. Phát hiện URL không đồng nghĩa CDN luôn cho tải. Kiểm thử live: `NEWSBOT_VI_MEDIA_URL=<URL> NEWSBOT_VI_MEDIA_VIDEO=1 go test ./internal/newsbot -run '^TestVietnameseLiveMedia$' -v` (cần FFmpeg).

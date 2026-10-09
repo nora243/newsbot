@@ -21,5 +21,5 @@ func jobRetryDelay(attempt int, err error) time.Duration {
 		}
 		return 2 * time.Minute * time.Duration(1<<(attempt-1))
 	}
-	return 30 * time.Second
+	return 5 * time.Second
 }

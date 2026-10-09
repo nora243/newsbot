@@ -72,11 +72,11 @@ type feedDocument struct {
 	XMLName xml.Name
 	Channel struct {
 		Items []struct {
-			Title       string `xml:"title"`
-			Link        string `xml:"link"`
-			Description string `xml:"description"`
-			Encoded     string `xml:"http://purl.org/rss/1.0/modules/content/ encoded"`
-			Date        string `xml:"pubDate"`
+			Title       string         `xml:"title"`
+			Link        rssArticleLink `xml:"link"`
+			Description string         `xml:"description"`
+			Encoded     string         `xml:"http://purl.org/rss/1.0/modules/content/ encoded"`
+			Date        string         `xml:"pubDate"`
 		} `xml:"item"`
 	} `xml:"channel"`
 	Entries []struct {
@@ -125,8 +125,20 @@ func ParseFeed(r io.Reader, source Source) ([]Article, error) {
 		}
 		h := sha256.Sum256([]byte(normalized(title + " " + content)))
 		a := Article{SourceID: source.ID, SourceName: source.Name, URL: canonical, Title: title, Content: content, Hash: hex.EncodeToString(h[:])}
-		for _, layout := range []string{time.RFC3339, time.RFC1123Z, time.RFC1123, time.RFC822Z, time.RFC822} {
-			if t, err := time.Parse(layout, date); err == nil {
+		trimmedDate := strings.TrimSpace(date)
+		for _, layout := range []string{
+			time.RFC3339,
+			time.RFC1123Z,
+			time.RFC1123,
+			"Mon, 2 Jan 2006 15:04:05 MST",
+			"Mon, 2 Jan 2006 15:04:05 -0700",
+			"Mon, _2 Jan 2006 15:04:05 MST",
+			"Mon, _2 Jan 2006 15:04:05 -0700",
+			time.RFC822Z,
+			time.RFC822,
+			"2006-01-02 15:04:05",
+		} {
+			if t, err := time.Parse(layout, trimmedDate); err == nil {
 				a.PublishedAt = &t
 				break
 			}
@@ -138,7 +150,7 @@ func ParseFeed(r io.Reader, source Source) ([]Article, error) {
 		if strings.TrimSpace(plainText(content)) == "" {
 			content = i.Description
 		}
-		add(i.Title, i.Link, content, i.Date)
+		add(i.Title, string(i.Link), content, i.Date)
 	}
 	for _, e := range feed.Entries {
 		link := ""
@@ -228,4 +240,18 @@ func FetchFeed(ctx context.Context, client *http.Client, source Source) ([]Artic
 		return nil, fmt.Errorf("RSS HTTP %d", resp.StatusCode)
 	}
 	return ParseFeed(resp.Body, source)
+}
+
+// An Atom link may accompany the RSS link. It must not overwrite the article URL.
+type rssArticleLink string
+
+func (l *rssArticleLink) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var value string
+	if err := d.DecodeElement(&value, &start); err != nil {
+		return err
+	}
+	if start.Name.Space != "http://www.w3.org/2005/Atom" && strings.TrimSpace(value) != "" {
+		*l = rssArticleLink(value)
+	}
+	return nil
 }

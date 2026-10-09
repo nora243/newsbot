@@ -46,3 +46,29 @@ func TestVnExpressDownloadedPage(t *testing.T) {
 	}
 	t.Logf("extracted %d words", len(strings.Fields(content)))
 }
+
+func TestExtractDW(t *testing.T) {
+	text := strings.Repeat("Ukrainian officials meet international representatives in Miami. ", 12)
+	page := `<article class="sk6xmai"><script>alert(1)</script><figure><figcaption>Caption</figcaption></figure><p>` + text + `</p><div class="vjs-wrapper"><video></video></div></article>`
+	got, err := extractDW(strings.NewReader(page))
+	if err != nil || got != strings.TrimSpace(text) {
+		t.Fatalf("wrong DW extraction: %q %v", got, err)
+	}
+	for _, raw := range []string{
+		"https://www.dw.com/en/story/a-79606735",
+		"https://dw.com/de/nachrichten/a-12345",
+	} {
+		if !dwURL(raw) || !isFullContentSupported(raw) {
+			t.Fatalf("expected DW URL to be supported: %s", raw)
+		}
+	}
+	for _, raw := range []string{
+		"http://www.dw.com/en/story/a-79606735",
+		"https://dw.com.attacker.com/a-123",
+		"https://www.dw.com/en/category",
+	} {
+		if dwURL(raw) {
+			t.Fatalf("expected DW URL to be rejected: %s", raw)
+		}
+	}
+}
