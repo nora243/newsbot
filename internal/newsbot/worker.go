@@ -118,10 +118,18 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 			}
 		}
 	}
+	repairCheck, err := w.Store.RepairCheck(ctx, j.VideoID)
+	if err != nil {
+		return "", 0, err
+	}
 	var script Script
 	if draft != nil {
 		script = *draft
-		err = script.Validate(articles)
+		if repairCheck != nil {
+			script, err = w.AI.RepairScenes(ctx, articles, script, *repairCheck)
+		} else {
+			err = script.Validate(articles)
+		}
 	} else {
 		script, err = w.AI.Generate(ctx, articles)
 	}
@@ -129,7 +137,11 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 		var providerErr *ProviderHTTPError
 		// Keep the rejected draft for diagnosis; never send it to TTS/render.
 		if !errors.As(err, &providerErr) && (script.Title != "" || script.Claims != nil || script.Scenes != nil) {
-			if saveErr := w.Store.SaveScript(ctx, j, script, FactCheck{}); saveErr != nil {
+			savedCheck := FactCheck{}
+			if repairCheck != nil {
+				savedCheck = *repairCheck
+			}
+			if saveErr := w.Store.SaveScript(ctx, j, script, savedCheck); saveErr != nil {
 				return "", 0, saveErr
 			}
 		}

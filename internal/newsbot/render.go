@@ -12,6 +12,10 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/gobold"
+	"golang.org/x/image/font/opentype"
 )
 
 func formatArticleTime(t *time.Time) string {
@@ -199,21 +203,6 @@ func (r *Renderer) Render(ctx context.Context, id string, s Script, articles []A
 			}
 		}
 		sceneEnd := assTime(total + d)
-		label := "THẺ TIN • SO HÍP"
-		if photo != "" {
-			label = "ẢNH TỪ BÀI VIẾT"
-		}
-		if clip.Name != "" {
-			label = "VIDEO TỪ BÀI VIẾT"
-		}
-		if len(r.SelectedMedia) == 0 {
-			fmt.Fprintf(&ass, "Dialogue: 2,%s,%s,Meta,,0,0,0,,{\\pos(88,1148)}%s\n", assTime(total), sceneEnd, label)
-		}
-		fmt.Fprintf(&ass, "Dialogue: 2,%s,%s,Accent,,0,0,0,,{\\pos(72,1220)}DIỄN BIẾN / %02d\n", assTime(total), sceneEnd, i+1)
-		if found {
-			sourceLine := "Nguồn: " + article.SourceName
-			fmt.Fprintf(&ass, "Dialogue: 2,%s,%s,Meta,,0,0,0,,{\\pos(72,1510)}%s\n", assTime(total), sceneEnd, assText(sourceLine))
-		}
 		if photo == "" && clip.Name == "" && len(r.SelectedMedia) == 0 {
 			text := scene.Narration
 			for _, claim := range s.Claims {
@@ -240,23 +229,13 @@ func (r *Renderer) Render(ctx context.Context, id string, s Script, articles []A
 	if total <= 60 || total > 180 {
 		return "", 0, fmt.Errorf("video dài %.1fs; yêu cầu dài hơn 60 giây và tối đa 180 giây; hãy bổ sung lời đọc có nguồn nếu video quá ngắn", total)
 	}
-	var mainTimeStr string
-	for _, a := range articles {
-		if tStr := formatArticleTime(a.PublishedAt); tStr != "" {
-			mainTimeStr = tStr
-			break
-		}
-	}
 	// Every explicitly selected asset appears once, in selection order, over the full narration.
 	for i, m := range r.SelectedMedia {
 		duration := total / float64(len(r.SelectedMedia))
-		start := float64(i) * duration
 		photo := ""
 		clip := articleClip{}
-		label := "ẢNH"
 		if m.Kind == "video" {
 			clip = articleClip{Name: m.Path, Duration: m.Duration}
-			label = "VIDEO"
 		} else {
 			photo = m.Path
 		}
@@ -265,19 +244,13 @@ func (r *Renderer) Render(ctx context.Context, id string, s Script, articles []A
 			return "", 0, err
 		}
 		fmt.Fprintf(&visuals, "file '%s'\nduration %.6f\n", name, duration)
-		fmt.Fprintf(&ass, "Dialogue: 2,%s,%s,Meta,,0,0,0,,{\\pos(88,1148)\\fs24}%s\n", assTime(start), assTime(start+duration), assText(clipText(label+" · "+m.SourceName, 52)))
 	}
 	end := assTime(total)
 	// ASS animates a clipped vector bar continuously without frame-dependent drawbox expressions.
 	fmt.Fprintf(&ass, "Dialogue: 4,0:00:00.00,%s,Accent,,0,0,0,,{\\an7\\pos(72,1572)\\bord0\\shad0\\1c&H63F5D8&\\clip(72,1572,72,1576)\\t(0,%d,\\clip(72,1572,876,1576))\\p1}m 0 0 l 804 0 804 4 0 4\n", end, int(total*1000))
 
-	topBanner := "TIN NÓNG. GÓC NHÌN MỚI."
-	if mainTimeStr != "" {
-		topBanner = "TIN NÓNG · " + mainTimeStr
-	}
 	fmt.Fprintf(&ass, "Dialogue: 3,0:00:00.00,%s,Brand,,0,0,0,,{\\pos(88,164)}So Híp{\\fs32} /\n", end)
-	fmt.Fprintf(&ass, "Dialogue: 2,0:00:00.00,%s,Accent,,0,0,0,,{\\pos(72,288)}%s\n", end, assText(topBanner))
-	fmt.Fprintf(&ass, "Dialogue: 2,0:00:00.00,%s,Title,,0,0,0,,{\\pos(72,350)\\fs%d}%s\n", end, titleSize(s.Title), assText(s.Title))
+	fmt.Fprintf(&ass, "Dialogue: 2,0:00:00.00,%s,Title,,56,120,0,,%s\n", end, titleOverlay(s.Title))
 	footerMeta := "SO HÍP / TIN TỨC • GIỌNG ĐỌC AI"
 	fmt.Fprintf(&ass, "Dialogue: 2,0:00:00.00,%s,Meta,,0,0,0,,{\\pos(72,1595)}%s\n", end, assText(footerMeta))
 	if err = os.WriteFile(filepath.Join(dir, "visuals.txt"), []byte(visuals.String()), 0600); err != nil {
@@ -300,16 +273,59 @@ func (r *Renderer) Render(ctx context.Context, id string, s Script, articles []A
 	return filepath.Join(dir, "video.mp4"), total, nil
 }
 
-// Header shrinks for long editorial titles; all text stays clear of the right rail.
-func titleSize(title string) int {
-	lines := strings.Count(assText(title), `\N`) + 1
-	if lines > 3 {
-		return 27
+// Fit the headline to the full 904-pixel media width and the space below the brand.
+func titleLayout(title string) (int, string) {
+	data, err := os.ReadFile("/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf")
+	if err != nil {
+		data = gobold.TTF
 	}
-	if lines > 2 {
-		return 36
+	parsed, err := opentype.Parse(data)
+	if err != nil {
+		parsed, _ = opentype.Parse(gobold.TTF)
 	}
-	return 48
+	// libass sizes fonts by ascent + descent rather than the font's em square.
+	reference, _ := opentype.NewFace(parsed, &opentype.FaceOptions{Size: 100, DPI: 72})
+	metrics := reference.Metrics()
+	ratio := float64(metrics.Ascent+metrics.Descent) / 64 / 100
+	reference.Close()
+	clean := strings.NewReplacer("\\", "／", "{", "(", "}", ")").Replace(title)
+	words := strings.Fields(clean)
+	for size := 88; size >= 28; size -= 2 {
+		face, _ := opentype.NewFace(parsed, &opentype.FaceOptions{Size: float64(size) / ratio, DPI: 72})
+		var lines []string
+		line := ""
+		for _, word := range words {
+			candidate := word
+			if line != "" {
+				candidate = line + " " + word
+			}
+			if line != "" && font.MeasureString(face, candidate).Ceil() > 904 {
+				lines = append(lines, line)
+				line = word
+			} else {
+				line = candidate
+			}
+		}
+		if line != "" {
+			lines = append(lines, line)
+		}
+		fits := len(lines)*size <= 220
+		for _, line := range lines {
+			if font.MeasureString(face, line).Ceil() > 904 {
+				fits = false
+			}
+		}
+		face.Close()
+		if fits || size == 28 {
+			return size, strings.Join(lines, `\N`)
+		}
+	}
+	return 28, clean
+}
+
+func titleOverlay(title string) string {
+	size, text := titleLayout(title)
+	return fmt.Sprintf(`{\pos(56,280)\fs%d}%s`, size, text)
 }
 func clipText(text string, limit int) string {
 	if utf8.RuneCountInString(text) <= limit {
@@ -323,7 +339,7 @@ func clipText(text string, limit int) string {
 	return text + "…"
 }
 func videoOverlay() string {
-	return "drawbox=x=56:y=156:w=330:h=106:c=0xD8F563:t=fill,drawbox=x=56:y=510:w=904:h=8:c=0xFF693B:t=fill,drawbox=x=56:y=1128:w=904:h=62:c=0x101515@0.8:t=fill,drawbox=x=56:y=1290:w=844:h=170:c=0x1F302C:t=fill,drawbox=x=56:y=1290:w=6:h=170:c=0xD8F563:t=fill,drawbox=x=72:y=1572:w=804:h=4:c=0x34433E:t=fill,ass=subtitles.ass"
+	return "drawbox=x=56:y=156:w=330:h=106:c=0xD8F563:t=fill,drawbox=x=56:y=510:w=904:h=8:c=0xFF693B:t=fill,drawbox=x=56:y=1290:w=844:h=170:c=0x1F302C:t=fill,drawbox=x=56:y=1290:w=6:h=170:c=0xD8F563:t=fill,drawbox=x=72:y=1572:w=804:h=4:c=0x34433E:t=fill,ass=subtitles.ass"
 }
 
 func renderVisual(ctx context.Context, dir, visualName, photo string, clip articleClip, d, offset float64) error {

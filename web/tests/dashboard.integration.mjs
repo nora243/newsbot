@@ -49,7 +49,7 @@ test("production dashboard login, authenticated proxy, video ranges and logout",
     const headers = { Cookie: cookie, Origin: origin, "Content-Type": "application/json" };
     const overview = await fetch(`${origin}/api/backend/overview`, { headers }); assert.equal(overview.status, 200); assert.equal((await overview.json()).ai.provider, "google");
     assert.equal(overview.headers.get("cache-control"), "no-store");
-    const filters = new URLSearchParams({ q: "Hòa bình", source_id: "2", category: "WORLD", offset: "100" });
+    const filters = new URLSearchParams({ q: "Hòa bình", source_id: "2", category: "WORLD", offset: "100", usage: "unused" });
     const articles = await fetch(`${origin}/api/backend/articles?${filters}&ignored=1`, { headers });
     assert.equal(articles.status, 200);
     assert.equal(lastUpstreamURL, `/api/articles?${filters}`);

@@ -212,11 +212,8 @@ func TestRenderIntegration(t *testing.T) {
 		if err != nil || len(clips) == 0 {
 			t.Fatalf("video did not load: %v", err)
 		}
-		subtitles, err := os.ReadFile(filepath.Join(filepath.Dir(path), "subtitles.ass"))
-		if err != nil || !strings.Contains(string(subtitles), "VIDEO TỪ BÀI VIẾT") {
-			t.Fatal("video fell back to photos")
-		}
 	}
+	assertVideoOverlays(t, path, s.Title, a[0].SourceName)
 	if d != 70 {
 		t.Fatalf("duration=%v", d)
 	}
@@ -557,5 +554,24 @@ func TestStoreIntegration(t *testing.T) {
 	refusedVideos, err := s.Videos(ctx, refusalJob.VideoID)
 	if err != nil || refusedVideos[0].Status != "failed" || refusalJob.Attempts != 1 {
 		t.Fatalf("editorial refusal retried: %+v %v", refusedVideos, err)
+	}
+}
+
+func assertVideoOverlays(t *testing.T, videoPath, title string, sources ...string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(videoPath), "subtitles.ass"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	overlays := string(data)
+	forbidden := append([]string{"Nguồn:", "TIN NÓNG", "DIỄN BIẾN", "ẢNH TỪ BÀI VIẾT", "VIDEO TỪ BÀI VIẾT"}, sources...)
+	for _, text := range forbidden {
+		if text != "" && strings.Contains(overlays, text) {
+			t.Errorf("unexpected overlay %q", text)
+		}
+	}
+	expected := titleOverlay(title)
+	if !strings.Contains(overlays, expected) {
+		t.Error("missing enlarged title")
 	}
 }

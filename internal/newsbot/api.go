@@ -105,7 +105,12 @@ func (a *API) Handler() (http.Handler, error) {
 			respond(w, 400, map[string]string{"error": "Từ khóa quá dài"})
 			return
 		}
-		s, err := a.Store.SearchArticles(r.Context(), query, sourceIDs, q.Get("category"), offset)
+		usage := q.Get("usage")
+		if usage != "" && usage != "used" && usage != "unused" {
+			respond(w, 400, map[string]string{"error": "Trạng thái sử dụng không hợp lệ"})
+			return
+		}
+		s, err := a.Store.SearchArticles(r.Context(), query, sourceIDs, q.Get("category"), offset, usage)
 		if err != nil {
 			a.internal(w, err)
 			return
@@ -225,8 +230,9 @@ func (a *API) revision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Script   Script   `json:"script"`
-		MediaIDs []string `json:"media_ids"`
+		Script             Script   `json:"script"`
+		MediaIDs           []string `json:"media_ids"`
+		RepairFailedScenes bool     `json:"repair_failed_scenes"`
 	}
 	if err := decode(w, r, &input); err != nil {
 		failure(w, 400, err.Error())
@@ -244,6 +250,25 @@ func (a *API) revision(w http.ResponseWriter, r *http.Request) {
 	if videos[0].Status == "queued" || videos[0].Status == "processing" {
 		failure(w, 409, "chờ phiên bản hiện tại xử lý xong")
 		return
+	}
+
+	if input.RepairFailedScenes {
+		if videos[0].Status != "failed" {
+			failure(w, 409, "chỉ sửa tự động bản bị chặn khi kiểm chứng")
+			return
+		}
+		var original Script
+		var check FactCheck
+		if json.Unmarshal(videos[0].Script, &original) != nil || json.Unmarshal(videos[0].FactCheck, &check) != nil {
+			failure(w, 400, "chưa có kịch bản và kết quả kiểm chứng để sửa")
+			return
+		}
+		if _, err := failedSceneIndices(check, len(original.Scenes)); err != nil {
+			failure(w, 400, err.Error())
+			return
+		}
+		input.Script = original
+		input.MediaIDs = videos[0].MediaIDs
 	}
 	articles, err := a.Store.JobArticles(r.Context(), videos[0].ID)
 	if err != nil {
@@ -267,7 +292,7 @@ func (a *API) revision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	id, err := a.Store.EnqueueRevision(r.Context(), videos[0].ID, articles, input.Script, input.MediaIDs)
+	id, err := a.Store.enqueueRevision(r.Context(), videos[0].ID, articles, input.Script, input.RepairFailedScenes, input.MediaIDs)
 	if err != nil {
 		a.internal(w, err)
 		return

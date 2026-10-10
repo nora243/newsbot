@@ -133,6 +133,7 @@ func TestSelectedMediaRenderIntegration(t *testing.T) {
 	if err != nil || d != 70 {
 		t.Fatalf("render %s %v %v", path, d, err)
 	}
+	assertVideoOverlays(t, path, script.Title, a[0].SourceName, "Selected image", "Selected video")
 	list, err := os.ReadFile(filepath.Join(filepath.Dir(path), "visuals.txt"))
 	if err != nil || strings.Count(string(list), "file '") != 2 || !strings.Contains(string(list), "selected-01") {
 		t.Fatal("selected montage missing", err)

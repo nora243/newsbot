@@ -29,31 +29,31 @@ func TestArticleSearchIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.SearchArticles(ctx, "", nil, "", 0)
+	rows, err := s.SearchArticles(ctx, "", nil, "", 0, "")
 	if err != nil || len(rows) != 101 {
 		t.Fatalf("first page %d %v", len(rows), err)
 	}
-	rows, err = s.SearchArticles(ctx, "", nil, "", 100)
+	rows, err = s.SearchArticles(ctx, "", nil, "", 100, "")
 	if err != nil || len(rows) != 11 {
 		t.Fatalf("second page %d %v", len(rows), err)
 	}
-	rows, err = s.SearchArticles(ctx, "unique", []int64{2}, "SPORTS", 0)
+	rows, err = s.SearchArticles(ctx, "unique", []int64{2}, "SPORTS", 0, "")
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("old matching row missing %v %v", rows, err)
 	}
-	rows, err = s.SearchArticles(ctx, "unique", []int64{1}, "", 0)
+	rows, err = s.SearchArticles(ctx, "unique", []int64{1}, "", 0, "")
 	if err != nil || len(rows) != 0 {
 		t.Fatal("source filter failed", err)
 	}
-	rows, err = s.SearchArticles(ctx, "", []int64{2}, "WORLD", 0)
+	rows, err = s.SearchArticles(ctx, "", []int64{2}, "WORLD", 0, "")
 	if err != nil || len(rows) != 0 {
 		t.Fatal("category filter failed", err)
 	}
-	rows, err = s.SearchArticles(ctx, "%_", nil, "", 0)
+	rows, err = s.SearchArticles(ctx, "%_", nil, "", 0, "")
 	if err != nil || len(rows) != 1 {
 		t.Fatal("literal special characters failed", err)
 	}
-	rows, err = s.SearchArticles(ctx, "", []int64{1, 2}, "", 0)
+	rows, err = s.SearchArticles(ctx, "", []int64{1, 2}, "", 0, "")
 	if err != nil || len(rows) != 101 {
 		t.Fatal("multiple sources failed", err)
 	}
@@ -65,11 +65,49 @@ func TestArticleSearchIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ordered, err := s.SearchArticles(ctx, "Article", nil, "", 0)
+	ordered, err := s.SearchArticles(ctx, "Article", nil, "", 0, "")
 	if err != nil || len(ordered) < 2 {
 		t.Fatalf("search for ordered articles failed: %v", err)
 	}
 	if ordered[0].Title != "Brand Newest Article" {
 		t.Fatalf("expected newest article first, got %s", ordered[0].Title)
 	}
+	// Usage is durable from enqueue onwards, including failed attempts and repeat requests.
+	failedID, err := s.Enqueue(ctx, []int64{1, 111})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB.Exec(ctx, `UPDATE videos SET status='failed' WHERE id=$1`, failedID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Enqueue(ctx, []int64{111}); err != nil {
+		t.Fatal(err)
+	}
+	used, err := s.SearchArticles(ctx, "", nil, "", 0, "used")
+	if err != nil || len(used) != 2 {
+		t.Fatalf("used articles duplicated or missing: %v %v", used, err)
+	}
+	for _, article := range used {
+		if !article.UsedForVideo {
+			t.Fatal("used article missing marker")
+		}
+	}
+	used, err = s.SearchArticles(ctx, "unique", []int64{2}, "SPORTS", 0, "used")
+	if err != nil || len(used) != 1 || used[0].ID != 111 {
+		t.Fatalf("combined usage filters failed: %v %v", used, err)
+	}
+	unused, err := s.SearchArticles(ctx, "", nil, "", 100, "unused")
+	if err != nil || len(unused) != 11 {
+		t.Fatalf("unused pagination failed: %d %v", len(unused), err)
+	}
+	for _, article := range unused {
+		if article.UsedForVideo || article.ID == 1 || article.ID == 111 {
+			t.Fatal("used article in unused results")
+		}
+	}
+	all, err := s.SearchArticles(ctx, "unique", nil, "", 0, "")
+	if err != nil || len(all) != 1 || !all[0].UsedForVideo {
+		t.Fatalf("all results missing usage marker: %v %v", all, err)
+	}
+
 }

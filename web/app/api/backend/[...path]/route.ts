@@ -21,7 +21,7 @@ async function proxy(request: Request, context: { params: Promise<{ path: string
   const articleParams = new URLSearchParams();
   if ((path === "articles" || path === "videos") && readOnly) {
     const incoming = new URL(request.url).searchParams;
-    for (const key of (path === "videos" ? ["q", "status"] : ["q", "source_id", "source_ids", "category", "offset"])) {
+    for (const key of (path === "videos" ? ["q", "status"] : ["q", "source_id", "source_ids", "category", "offset", "usage"])) {
       const value = incoming.get(key); if (value !== null) articleParams.set(key, value);
     }
   }

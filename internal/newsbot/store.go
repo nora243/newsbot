@@ -70,12 +70,14 @@ func (s *Store) Articles(ctx context.Context, ids []int64) ([]Article, error) {
 	}
 	return out, rows.Err()
 }
-func (s *Store) SearchArticles(ctx context.Context, query string, sourceIDs []int64, category string, offset int) ([]Article, error) {
-	rows, err := s.DB.Query(ctx, `SELECT a.id,a.source_id,s.name,a.canonical_url,a.title,a.content,COALESCE(a.published_at, a.collected_at)
+func (s *Store) SearchArticles(ctx context.Context, query string, sourceIDs []int64, category string, offset int, usage string) ([]Article, error) {
+	rows, err := s.DB.Query(ctx, `SELECT a.id,a.source_id,s.name,a.canonical_url,a.title,a.content,COALESCE(a.published_at, a.collected_at), usage.used
  FROM news_articles a JOIN news_sources s ON s.id=a.source_id
+ CROSS JOIN LATERAL (SELECT EXISTS(SELECT 1 FROM video_sources vs WHERE vs.article_id=a.id) AS used) usage
  WHERE ($1='' OR strpos(lower(a.title),lower($1))>0)
  AND ($2::bigint[] IS NULL OR cardinality($2)=0 OR a.source_id=ANY($2)) AND ($3='' OR s.category=$3)
- ORDER BY COALESCE(a.published_at, a.collected_at) DESC, a.collected_at DESC, a.id DESC LIMIT 101 OFFSET $4`, query, sourceIDs, category, offset)
+ AND ($5='' OR ($5='used' AND usage.used) OR ($5='unused' AND NOT usage.used))
+ ORDER BY COALESCE(a.published_at, a.collected_at) DESC, a.collected_at DESC, a.id DESC LIMIT 101 OFFSET $4`, query, sourceIDs, category, offset, usage)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +85,7 @@ func (s *Store) SearchArticles(ctx context.Context, query string, sourceIDs []in
 	out := []Article{}
 	for rows.Next() {
 		var a Article
-		if err = rows.Scan(&a.ID, &a.SourceID, &a.SourceName, &a.URL, &a.Title, &a.Content, &a.PublishedAt); err != nil {
+		if err = rows.Scan(&a.ID, &a.SourceID, &a.SourceName, &a.URL, &a.Title, &a.Content, &a.PublishedAt, &a.UsedForVideo); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -91,10 +93,13 @@ func (s *Store) SearchArticles(ctx context.Context, query string, sourceIDs []in
 	return out, rows.Err()
 }
 func (s *Store) Enqueue(ctx context.Context, ids []int64, media ...[]string) (string, error) {
-	return s.enqueue(ctx, ids, nil, nil, media...)
+	return s.enqueue(ctx, ids, nil, nil, false, media...)
 }
 
 func (s *Store) EnqueueRevision(ctx context.Context, parentID string, articles []Article, draft Script, media ...[]string) (string, error) {
+	return s.enqueueRevision(ctx, parentID, articles, draft, false, media...)
+}
+func (s *Store) enqueueRevision(ctx context.Context, parentID string, articles []Article, draft Script, repair bool, media ...[]string) (string, error) {
 	if err := draft.Validate(articles); err != nil {
 		return "", err
 	}
@@ -106,10 +111,10 @@ func (s *Store) EnqueueRevision(ctx context.Context, parentID string, articles [
 	if err != nil {
 		return "", err
 	}
-	return s.enqueue(ctx, ids, data, &parentID, media...)
+	return s.enqueue(ctx, ids, data, &parentID, repair, media...)
 }
 
-func (s *Store) enqueue(ctx context.Context, ids []int64, draft []byte, parentID *string, media ...[]string) (string, error) {
+func (s *Store) enqueue(ctx context.Context, ids []int64, draft []byte, parentID *string, repair bool, media ...[]string) (string, error) {
 	if len(ids) == 0 || len(ids) > 6 {
 		return "", fmt.Errorf("chọn 1–6 bài viết cùng sự kiện")
 	}
@@ -133,7 +138,7 @@ func (s *Store) enqueue(ctx context.Context, ids []int64, draft []byte, parentID
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `INSERT INTO videos(id,parent_id,draft_script,script,media_ids) VALUES($1,$2,$3,$3,$4)`, id, parentID, draft, mediaJSON); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO videos(id,parent_id,draft_script,script,media_ids,repair_failed_scenes) VALUES($1,$2,$3,$3,$4,$5)`, id, parentID, draft, mediaJSON, repair); err != nil {
 		return "", err
 	}
 	for _, aid := range ids {
@@ -315,4 +320,24 @@ func (s *Store) Videos(ctx context.Context, id string, filters ...string) ([]Vid
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// A repair job uses the completed parent's check to select exactly which scenes to replace.
+func (s *Store) RepairCheck(ctx context.Context, id string) (*FactCheck, error) {
+	var requested bool
+	var raw []byte
+	if err := s.DB.QueryRow(ctx, `SELECT v.repair_failed_scenes,p.fact_check FROM videos v LEFT JOIN videos p ON p.id=v.parent_id WHERE v.id=$1`, id).Scan(&requested, &raw); err != nil {
+		return nil, err
+	}
+	if !requested {
+		return nil, nil
+	}
+	if raw == nil {
+		return nil, fmt.Errorf("thiếu kết quả kiểm chứng của bản trước")
+	}
+	var check FactCheck
+	if err := json.Unmarshal(raw, &check); err != nil {
+		return nil, err
+	}
+	return &check, nil
 }

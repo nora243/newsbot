@@ -19,14 +19,15 @@ type Source struct {
 }
 
 type Article struct {
-	ID          int64      `json:"id"`
-	SourceID    int64      `json:"source_id"`
-	SourceName  string     `json:"source_name"`
-	URL         string     `json:"url"`
-	Title       string     `json:"title"`
-	Content     string     `json:"content"`
-	PublishedAt *time.Time `json:"published_at"`
-	Hash        string     `json:"-"`
+	UsedForVideo bool       `json:"used_for_video"`
+	ID           int64      `json:"id"`
+	SourceID     int64      `json:"source_id"`
+	SourceName   string     `json:"source_name"`
+	URL          string     `json:"url"`
+	Title        string     `json:"title"`
+	Content      string     `json:"content"`
+	PublishedAt  *time.Time `json:"published_at"`
+	Hash         string     `json:"-"`
 }
 
 type Evidence struct {
@@ -123,7 +124,7 @@ func (f FactCheck) Validate(n int) error {
 	seen := map[int]bool{}
 	for _, c := range f.Scenes {
 		if c.SceneIndex < 0 || c.SceneIndex >= n || seen[c.SceneIndex] || !c.Supported {
-			return fmt.Errorf("cảnh %d chưa được nguồn hỗ trợ: %s", c.SceneIndex, c.Reason)
+			return fmt.Errorf("cảnh %d chưa được nguồn hỗ trợ: %s", c.SceneIndex+1, c.Reason)
 		}
 		seen[c.SceneIndex] = true
 	}

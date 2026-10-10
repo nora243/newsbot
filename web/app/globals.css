@@ -61,3 +61,7 @@
 .media-video-preview{position:relative;display:block;width:100%;padding:0;background:#101515;color:#fff}
 .media-play-button{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:10px 16px;background:#102033dd;border-radius:24px;white-space:nowrap}
 .media-preview-placeholder{display:grid;place-items:center;height:200px}
+
+.article-controls .toolbar{flex-wrap:wrap}
+.article-meta{align-items:center;flex-wrap:wrap}
+.article-meta .article-used{background:#e7f5ed;color:#207047;font-size:10px;padding:3px 8px}
