@@ -15,7 +15,8 @@ test("article usage filters, media selections and selective scene repair", {skip
  const assets=Array.from({length:40},(_,i)=>({id:(i+1).toString(16).padStart(32,"0"),article_id:1,kind:i<8?"video":"image",source_name:"Test source",article_title:"Test article"}));
  const requests=[];const exceptions=[];
  const failedID="f".repeat(32), repairedID="e".repeat(32);
- let repairBody;
+ let repairBody, createBody, uploadBody;
+ const uploadedID="d".repeat(32);
  const failedVideo={id:failedID,status:"failed",media_ids:[assets[0].id],script:{title:"Blocked test video",summary:"Test summary",uncertainties:[],claims:[],scenes:[{narration:"Keep this approved scene",subtitle:"Keep this approved scene",claim_ids:[]},{narration:"Replace this unsupported scene",subtitle:"Replace this unsupported scene",claim_ids:[]}]},fact_check:{scenes:[{scene_index:0,supported:true,reason:"Supported"},{scene_index:1,supported:false,reason:"Unsupported"}]},last_error:"fact check failed",created_at:new Date().toISOString(),sources:[]};
 
  const backend=http.createServer(async(req,res)=>{
@@ -30,12 +31,20 @@ test("article usage filters, media selections and selective scene repair", {skip
    const articles=[{id:1,source_id:1,source_name:"Test source",url:"https://example.com/one",title:"Test article",content:"Source content",used_for_video:true},{id:2,source_id:1,source_name:"Test source",url:"https://example.com/two",title:"Unused article",content:"Source content",used_for_video:false}];
    res.end(JSON.stringify(articles.filter(a=>usage==="used"?a.used_for_video:usage==="unused"?!a.used_for_video:true)));
   }
+  else if(path==="/api/videos"&&req.method==="POST"){
+   let body="";for await(const chunk of req)body+=chunk;createBody=JSON.parse(body);res.statusCode=202;res.end(JSON.stringify({id:repairedID,status:"queued"}));
+  }
   else if(path===`/api/videos/${failedID}/revisions`&&req.method==="POST"){
    let body="";for await(const chunk of req)body+=chunk;repairBody=JSON.parse(body);res.statusCode=202;res.end(JSON.stringify({id:repairedID,status:"queued"}));
   }
-  else if(path==="/api/videos")res.end(JSON.stringify([failedVideo,...(repairBody?[{...failedVideo,id:repairedID,status:"queued",fact_check:null,last_error:null,parent_id:failedID}]:[])]));
+  else if(path==="/api/videos")res.end(JSON.stringify([failedVideo,...(repairBody?[{...failedVideo,id:repairedID,status:"queued",fact_check:null,last_error:null,parent_id:failedID,fact_check_enabled:!createBody||createBody.fact_check_enabled}]:[])]));
   else if(path===`/api/videos/${failedID}`)res.end(JSON.stringify(failedVideo));
-  else if(path===`/api/videos/${repairedID}`)res.end(JSON.stringify({...failedVideo,id:repairedID,status:"queued",fact_check:null,last_error:null,parent_id:failedID}));
+  else if(path===`/api/videos/${repairedID}`)res.end(JSON.stringify({...failedVideo,id:repairedID,status:"queued",fact_check:null,last_error:null,parent_id:failedID,fact_check_enabled:!createBody||createBody.fact_check_enabled}));
+  else if(path==="/api/media/upload"&&req.method==="POST"){
+   assert.match(req.headers["content-type"],/^multipart\/form-data; boundary=/);
+   const chunks=[];for await(const chunk of req)chunks.push(chunk);uploadBody=Buffer.concat(chunks).toString();
+   res.statusCode=201;res.end(JSON.stringify({id:uploadedID,article_id:1,kind:"image",uploaded:true,source_name:"Tải lên",article_title:"custom.png"}));
+  }
   else if(path==="/api/media/discover")res.end(JSON.stringify({assets,warnings:[]}));
   else if(path.endsWith("/file")){res.statusCode=404;res.end(JSON.stringify({error:"Playback unavailable in test"}));}
   else res.end("[]");
@@ -67,6 +76,7 @@ test("article usage filters, media selections and selective scene repair", {skip
   await waitFor(()=>evaluate(`!!document.querySelector('.article-row input')`));
   await waitFor(()=>evaluate(`document.querySelectorAll('.article-row').length===2`));
   assert.equal(await evaluate(`document.querySelectorAll('.article-used').length`),1);
+  assert.equal(await evaluate(`document.querySelectorAll('.articles-panel .fact-check-option').length`),0);
   const setUsage=async value=>evaluate(`(()=>{const select=document.querySelector('select[aria-label="Lọc trạng thái sử dụng"]');select.value=${JSON.stringify(value)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   await setUsage("unused");
   await waitFor(()=>evaluate(`document.querySelectorAll('.article-row').length===1 && document.querySelector('.article-row h3').textContent.includes('Unused article')`));
@@ -91,7 +101,23 @@ test("article usage filters, media selections and selective scene repair", {skip
   assert.equal(await evaluate(`document.querySelectorAll('.media-card video').length`),0);
   await evaluate(`document.querySelector('.media-video-preview').click()`);
   await waitFor(()=>evaluate(`document.querySelectorAll('.media-card video').length===1`));
-  await evaluate(`Array.from(document.querySelectorAll('[role="dialog"] button')).find(b=>b.textContent==='Đóng ×')?.click()`);
+  assert.equal(await evaluate(`document.querySelector('.media-dialog .fact-check-option input').checked`),true);
+  await evaluate(`document.querySelector('.media-dialog .fact-check-option input').click()`);
+  assert.equal(await evaluate(`document.querySelector('.media-dialog .fact-check-option input').checked`),false);
+  assert.equal(await evaluate(`document.querySelector('.media-dialog .media-source-option input').checked`),false);
+  await evaluate(`document.querySelector('.media-dialog .media-source-option input').click()`);
+  await evaluate(`document.querySelector('.media-card input').click()`);
+  await evaluate(`(()=>{const input=document.querySelector('.media-dialog input[type="file"]');const transfer=new DataTransfer();transfer.items.add(new File([new Uint8Array(40000)],"custom.png",{type:"image/png"}));input.files=transfer.files;input.dispatchEvent(new Event("change",{bubbles:true}));})()`);
+  await waitFor(()=>evaluate(`document.querySelectorAll('.media-card').length===41 && document.querySelector('.media-footer strong').textContent==='24/24'`));
+  assert.match(uploadBody,/name="article_id"[\s\S]*1/);
+  assert.match(uploadBody,/filename="custom.png"/);
+  await evaluate(`document.querySelector('.media-footer button.primary').click()`);
+  await waitFor(()=>createBody!==undefined);
+  assert.equal(createBody.fact_check_enabled,false);
+  assert.equal(createBody.show_media_source,true);
+  assert.ok(createBody.media_ids.includes(uploadedID));
+  await waitFor(()=>evaluate(`!!document.querySelector('.detail-heading .queued')`));
+
   await evaluate(`Array.from(document.querySelectorAll('nav button')).find(b=>b.textContent.includes('Sản xuất video')).click()`);
   await waitFor(()=>evaluate(`!!document.querySelector('.video-row')`));
   await evaluate(`document.querySelector('.video-row').click()`);

@@ -26,7 +26,7 @@ func defaultSpeechProfile(category string) SpeechProfile {
 	switch category {
 	case "HEALTH":
 		p.Prompt = "A professional Vietnamese female voice in her mid-30s with a warm, empathetic timbre and a clear natural Vietnamese accent, suitable for health narration."
-		p.Style = "warm, empathetic and calm; measured pacing, careful pronunciation of medical terms; informative without alarmism"
+		p.Style = "warm, clear and confident health news delivery; moderately brisk pacing, about 10–15% faster than a calm explanatory read, with short natural pauses; firm, audible vocal projection and precise pronunciation of medical terms; informative without alarmism"
 	case "TECHNOLOGY", "SCIENCE", "AUTO":
 		p.Prompt = "A professional Vietnamese female presenter in her early 30s with a crisp, bright timbre and a clear natural Vietnamese accent."
 		p.Style = "engaged, curious and confident; clear articulation of technical terms, moderate lively pacing without hype"
@@ -91,6 +91,7 @@ func (a *AI) prepareSpeech(ctx context.Context, store *Store, category string) (
 }
 
 func (a *AI) createDesignedVoice(ctx context.Context, category, prompt string) (string, error) {
+	ctx = context.WithValue(ctx, aiOperationKey{}, "voice_design")
 	p := a.Config.Google
 	data, err := a.post(ctx, "google", p, "/voices", map[string]any{"store": true, "voice": map[string]any{"model": p.TTSModel, "type": "prompted", "display_name": "Newsbot " + category, "gender": "female", "language_code": "vi-VN", "prompted": map[string]string{"input": prompt}}}, 16<<20)
 	if err != nil {

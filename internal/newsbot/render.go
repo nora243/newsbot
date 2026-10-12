@@ -33,11 +33,12 @@ type Speaker interface {
 	Speech(context.Context, string) ([]byte, error)
 }
 type Renderer struct {
-	SelectedMedia []ResolvedMedia
-	OutputDir     string
-	Speaker       Speaker
-	PhotoLoader   func(context.Context, Article) ([][]byte, error)
-	ClipLoader    func(context.Context, Article, string) (articleClip, error)
+	ShowMediaSource bool
+	SelectedMedia   []ResolvedMedia
+	OutputDir       string
+	Speaker         Speaker
+	PhotoLoader     func(context.Context, Article) ([][]byte, error)
+	ClipLoader      func(context.Context, Article, string) (articleClip, error)
 }
 
 func command(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
@@ -203,6 +204,9 @@ func (r *Renderer) Render(ctx context.Context, id string, s Script, articles []A
 			}
 		}
 		sceneEnd := assTime(total + d)
+		if r.ShowMediaSource && len(r.SelectedMedia) == 0 && (photo != "" || clip.Name != "") {
+			ass.WriteString(mediaSourceOverlay(total, total+d, article.SourceName))
+		}
 		if photo == "" && clip.Name == "" && len(r.SelectedMedia) == 0 {
 			text := scene.Narration
 			for _, claim := range s.Claims {
@@ -232,6 +236,9 @@ func (r *Renderer) Render(ctx context.Context, id string, s Script, articles []A
 	// Every explicitly selected asset appears once, in selection order, over the full narration.
 	for i, m := range r.SelectedMedia {
 		duration := total / float64(len(r.SelectedMedia))
+		if r.ShowMediaSource {
+			ass.WriteString(mediaSourceOverlay(float64(i)*duration, float64(i+1)*duration, m.SourceName))
+		}
 		photo := ""
 		clip := articleClip{}
 		if m.Kind == "video" {
@@ -360,4 +367,11 @@ func renderVisual(ctx context.Context, dir, visualName, photo string, clip artic
 	}
 
 	return nil
+}
+
+func mediaSourceOverlay(start, end float64, source string) string {
+	if strings.TrimSpace(source) == "" {
+		return ""
+	}
+	return fmt.Sprintf("Dialogue: 2,%s,%s,Meta,,0,0,0,,{\\pos(88,1130)\\fs26\\bord2\\shad1}%s\n", assTime(start), assTime(end), assText(clipText("Nguồn: "+source, 52)))
 }

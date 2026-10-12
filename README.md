@@ -276,9 +276,9 @@ API quản trị: `GET /api/sources/export` tải JSON, `POST /api/sources/impor
 
 ## Giọng đọc tự động theo chủ đề (Google 3.8 TTS)
 
-Với `TTS_PROVIDER=google` (hoặc AI_PROVIDER=google và TTS_PROVIDER trống) và `GOOGLE_TTS_MODEL=gemini-3.8-flash-tts` / `gemini-3.8-flash-lite-tts`, mặc định worker phân loại **kịch bản đã vượt kiểm tra dữ kiện** rồi chọn phong cách đọc. Phân loại dùng thêm một request text tới AI_PROVIDER, không chỉ dựa vào chủ đề nguồn RSS.
+Với `TTS_PROVIDER=google` (hoặc AI_PROVIDER=google và TTS_PROVIDER trống) và `GOOGLE_TTS_MODEL=gemini-3.8-flash-tts` / `gemini-3.8-flash-lite-tts`, bước viết kịch bản trả luôn category để chọn phong cách đọc sau khi vượt kiểm chứng. Kịch bản cũ chưa có category được phân loại một lần và lưu lại để dùng cho các lần thử tiếp theo.
 
-- HEALTH: giọng nữ tiếng Việt ấm, đồng cảm; đọc chậm vừa, rõ thuật ngữ, không gây hoảng sợ.
+- HEALTH: giọng nữ tiếng Việt ấm, đồng cảm; nhịp nhanh vừa, giọng rõ và chắc, rõ thuật ngữ, không gây hoảng sợ.
 - TECHNOLOGY/SCIENCE/AUTO: giọng sáng, rõ, tò mò; nhịp linh hoạt vừa phải.
 - SPORTS: có năng lượng, nhấn kết quả, không hét.
 - BUSINESS/REAL_ESTATE: điềm tĩnh, rõ số liệu.
@@ -320,8 +320,24 @@ Log `full article loaded` có article_id và số từ đã lấy, không ghi to
 
 ### Chặn audio Google TTS lệch ngôn ngữ
 
-Mọi request Google TTS gửi `speechConfig.languageCode=vi-VN`, kể cả giọng mặc định, Voice Design và khi tắt TTS_AUTO_STYLE. Mặc định `GOOGLE_VERIFY_VIETNAMESE=true`: sau mỗi cảnh, gửi audio WAV thật tới model Google hỗ trợ audio để phiên âm nguyên ngữ và kiểm tra toàn bộ lời kể tiếng Việt (cho phép tên riêng/chữ viết tắt nước ngoài trong câu tiếng Việt). Không gửi narration dự kiến cho checker để giảm nguy cơ nó sao chép kịch bản thay vì nghe audio.
+Mọi request Google TTS gửi `speechConfig.languageCode=vi-VN`, kể cả giọng mặc định, Voice Design và khi tắt TTS_AUTO_STYLE. Mặc định `GOOGLE_VERIFY_VIETNAMESE=false` để giảm chi phí. Khi bật `true`, sau mỗi cảnh, gửi audio WAV thật tới model Google hỗ trợ audio để phiên âm nguyên ngữ và kiểm tra toàn bộ lời kể tiếng Việt (cho phép tên riêng/chữ viết tắt nước ngoài trong câu tiếng Việt). Không gửi narration dự kiến cho checker để giảm nguy cơ nó sao chép kịch bản thay vì nghe audio.
 
 Nếu kiểm tra không đạt, tạo lại riêng cảnh đó tối đa 3 lần với cùng voice và languageCode; hết lượt thì dừng job, không ghép audio bị từ chối. Nếu checker lỗi hoặc không trả kết quả hợp lệ thì dừng lượt xử lý, không bỏ qua kiểm tra. Lỗi chỉ rõ `TTS cảnh 06` (đếm từ 1); log `TTS audio rejected: not Vietnamese` ghi lần tạo bị từ chối. Kiểm tra bằng AI có thể nhận định sai; chưa phải chứng nhận tuyệt đối về ngôn ngữ, nên vẫn nghe video ở bước duyệt.
 
 `GOOGLE_AUDIO_CHECK_MODEL` mặc định theo GOOGLE_TEXT_MODEL, phải hỗ trợ audio đầu vào và structured output. Có thêm một request hiểu audio mỗi cảnh (và các lượt tạo lại nếu sai tiếng), tăng chi phí/thời gian. `GOOGLE_VERIFY_VIETNAMESE=false` tắt checker, chỉ còn languageCode nên không nên dùng nếu yêu cầu chặn audio sai tiếng. Audio/video đã tạo trước đây không tự thay đổi; tạo bản sửa hoặc video mới để áp dụng. Không cần migration mới.
+
+
+## Giảm chi phí AI
+
+Worker dừng khi kiểm chứng xác định cảnh chưa được nguồn hỗ trợ; lỗi mạng/tạm thời vẫn được thử lại. Khi thử lại sau lỗi TTS hoặc render, kịch bản và kết quả kiểm chứng đã đạt được dùng lại. Bước viết kịch bản trả chủ đề giọng đọc cùng nội dung; phụ đề được tạo từ narration tại ứng dụng. Payload viết/kiểm chứng giữ toàn bộ title/content và ID nguồn, bỏ metadata quản trị và phần phụ đề lặp lại.
+
+Audio từng cảnh được lưu trong `OUTPUT_DIR/.speech-cache`, dùng chung giữa các job và phiên bản video. Khóa cache gồm lời đọc chính xác, provider, tài khoản, endpoint, model, giọng, phong cách đọc và chế độ kiểm tra tiếng Việt. FFprobe xác nhận audio trước khi lưu và trước khi dùng lại; file được ghi nguyên tử và khóa để tránh trả phí hai lần cho yêu cầu đồng thời. Đổi lời đọc/giọng/tốc độ tạo cache mới. Cache bắt đầu tích lũy từ khi bật tính năng; không nhập audio cũ thiếu metadata giọng đọc.
+
+Log `AI token usage` ghi usage do provider trả về theo video ID, operation và model endpoint. Log `speech cache hit` cho biết cảnh dùng lại audio. Đây là số token, chưa phải hóa đơn hoặc quy đổi VNĐ. Giọng được thiết kế vẫn dùng cache `designed_voices` sẵn có.
+
+
+## Chọn kiểm chứng dữ kiện theo video
+
+Trước khi tạo video, checkbox “Kiểm chứng dữ kiện trước khi tạo video” xuất hiện ở trang chọn tin và cửa sổ chọn ảnh/video, mặc định bật. Bỏ chọn để không gọi AI đối chiếu nội dung với bài nguồn; hệ thống vẫn kiểm tra cấu trúc kịch bản, độ dài và bằng chứng trích dẫn hợp lệ. Chi tiết video ghi rõ khi kiểm chứng bị tắt và không hiển thị cảnh đã được kiểm chứng.
+
+API tạo video và tạo phiên bản sửa nhận `fact_check_enabled: true/false`. Nếu không truyền, video mới mặc định bật; bản sửa kế thừa bản trước. Tác vụ `repair_failed_scenes` luôn bật lại kiểm chứng cho các cảnh sửa. Lựa chọn được lưu bền vững trên mỗi video qua migration `008_optional_fact_check.sql`.

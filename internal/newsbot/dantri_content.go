@@ -39,7 +39,7 @@ func extractDanTri(r io.Reader) (string, error) {
 		if body != nil {
 			return
 		}
-		if n.Type == html.ElementNode && (nodeAttribute(n, "id") == "desktop-in-article" || hasClass(n, "singular-content")) {
+		if n.Type == html.ElementNode && (nodeAttribute(n, "id") == "desktop-in-article" || hasClass(n, "singular-content") || hasClass(n, "e-magazine__body")) {
 			body = n
 			return
 		}

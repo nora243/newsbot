@@ -15,7 +15,7 @@ func TestJobRetryDelay(t *testing.T) {
 			}
 		}
 	}
-	for _, err := range []error{nil, &ProviderHTTPError{HTTPStatus: 400}, &InsufficientSourceError{}} {
+	for _, err := range []error{nil, &ProviderHTTPError{HTTPStatus: 400}, &InsufficientSourceError{}, &FactCheckError{message: "unsupported"}} {
 		if jobRetryDelay(1, err) != 0 {
 			t.Fatalf("terminal error retried: %v", err)
 		}

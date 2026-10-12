@@ -2,10 +2,13 @@ package newsbot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -59,6 +62,7 @@ type Worker struct {
 }
 
 func (w *Worker) process(ctx context.Context, j Job) (path string, duration float64, err error) {
+	ctx = context.WithValue(ctx, aiVideoKey{}, j.VideoID)
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 	defer cancel()
 	leaseDone := make(chan struct{})
@@ -122,8 +126,20 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 	if err != nil {
 		return "", 0, err
 	}
+	// Resume persisted work after transport/render errors instead of buying the same text again.
+	var prepared Script
+	var preparedCheck FactCheck
+	saved, loadErr := w.Store.Videos(ctx, j.VideoID)
+	if loadErr != nil {
+		return "", 0, loadErr
+	}
+	reusable := len(saved) == 1 && json.Unmarshal(saved[0].Script, &prepared) == nil && prepared.Validate(articles) == nil
+	checked := reusable && json.Unmarshal(saved[0].FactCheck, &preparedCheck) == nil && preparedCheck.Validate(len(prepared.Scenes)) == nil
 	var script Script
-	if draft != nil {
+	repairPrepared := reusable && repairCheck != nil && draft != nil && !reflect.DeepEqual(prepared, *draft)
+	if checked || repairPrepared || (reusable && draft == nil) {
+		script = prepared
+	} else if draft != nil {
 		script = *draft
 		if repairCheck != nil {
 			script, err = w.AI.RepairScenes(ctx, articles, script, *repairCheck)
@@ -147,7 +163,16 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 		}
 		return "", 0, fmt.Errorf("script generate/validate: %w", err)
 	}
-	check, err := w.AI.Check(ctx, articles, script)
+	check := FactCheck{}
+	if len(saved) != 1 {
+		return "", 0, fmt.Errorf("không có video")
+	}
+	if saved[0].FactCheckEnabled && checked {
+		check = preparedCheck
+	}
+	if saved[0].FactCheckEnabled && !checked {
+		check, err = w.AI.Check(ctx, articles, script)
+	}
 	// Persist both successful and blocked drafts for review/debugging.
 	if saveErr := w.Store.SaveScript(ctx, j, script, check); saveErr != nil {
 		return "", 0, saveErr
@@ -157,9 +182,18 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 	}
 	speechCtx := ctx
 	if w.AI.Config.speechProvider() == "google" && supportsVoiceDesign(w.AI.Config.Google.TTSModel) && w.AI.Config.TTSAutoStyle {
-		category, categoryErr := w.AI.speechCategory(ctx, script)
-		if categoryErr != nil {
-			return "", 0, fmt.Errorf("speech category: %w", categoryErr)
+		category := script.Category
+		if category == "" {
+			// Older scripts have no category; classify once and persist it for later retries.
+			var categoryErr error
+			category, categoryErr = w.AI.speechCategory(ctx, script)
+			if categoryErr != nil {
+				return "", 0, fmt.Errorf("speech category: %w", categoryErr)
+			}
+			script.Category = category
+			if saveErr := w.Store.SaveScript(ctx, j, script, check); saveErr != nil {
+				return "", 0, saveErr
+			}
 		}
 		speechCtx, err = w.AI.prepareSpeech(ctx, w.Store, category)
 		if err != nil {
@@ -169,6 +203,8 @@ func (w *Worker) process(ctx context.Context, j Job) (path string, duration floa
 	}
 	renderer := *w.Renderer
 	renderer.SelectedMedia = selectedMedia
+	renderer.ShowMediaSource = saved[0].ShowMediaSource
+	renderer.Speaker = &cachedSpeaker{Speaker: renderer.Speaker, Dir: filepath.Join(renderer.OutputDir, ".speech-cache"), Namespace: speechCacheNamespace(speechCtx, w.AI.Config)}
 	return renderer.Render(speechCtx, j.VideoID, script, articles)
 }
 func (w *Worker) Run(ctx context.Context) error {

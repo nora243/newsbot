@@ -8,7 +8,7 @@ import (
 
 func TestExtractDanTri(t *testing.T) {
 	text := strings.Repeat("Nội dung dữ kiện thử nghiệm trong bài báo. ", 12)
-	for _, container := range []string{`id="desktop-in-article" data-slot="content"`, `class="singular-content"`} {
+	for _, container := range []string{`id="desktop-in-article" data-slot="content"`, `class="singular-content"`, `class="e-magazine__body dnews__body"`} {
 		page := `<p>Outside</p><div ` + container + `><h2>Heading</h2><p>` + text + `</p><figure><p>Caption</p></figure><div data-slot="ads-in-content"><p>Advertising</p></div><div class="related-news"><p>Related</p></div><script>Bad</script></div><p>Footer</p>`
 		got, err := extractDanTri(strings.NewReader(page))
 		if err != nil || got != "Heading\n"+strings.TrimSpace(text) {
@@ -47,6 +47,28 @@ func TestDanTriDownloadedPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, fact := range []string{"354.957", "UK Biobank", "13 năm", "5 tách"} {
+		if !strings.Contains(content, fact) {
+			t.Fatalf("missing article detail: %s", fact)
+		}
+	}
+	t.Logf("extracted %d words", len(strings.Fields(content)))
+}
+
+func TestDanTriDNewsDownloadedPage(t *testing.T) {
+	path := os.Getenv("NEWSBOT_DANTRI_DNEWS_TEST_FILE")
+	if path == "" {
+		t.Skip("optional downloaded DNews article")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	content, err := extractDanTri(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range []string{"10 phút", "Phụ sản Hà Nội", "khai sinh"} {
 		if !strings.Contains(content, fact) {
 			t.Fatalf("missing article detail: %s", fact)
 		}

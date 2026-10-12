@@ -119,6 +119,7 @@ func (a *API) Handler() (http.Handler, error) {
 	})
 	private.HandleFunc("DELETE /api/sources/{id}", a.deleteSource)
 	private.HandleFunc("POST /api/media/discover", a.discoverMedia)
+	private.HandleFunc("POST /api/media/upload", a.uploadMedia)
 	private.HandleFunc("GET /api/media/{id}/file", a.mediaFile)
 	private.HandleFunc("GET /api/media/{id}/preview", a.mediaPreview)
 	private.HandleFunc("POST /api/videos", a.generate)
@@ -233,6 +234,8 @@ func (a *API) revision(w http.ResponseWriter, r *http.Request) {
 		Script             Script   `json:"script"`
 		MediaIDs           []string `json:"media_ids"`
 		RepairFailedScenes bool     `json:"repair_failed_scenes"`
+		FactCheckEnabled   *bool    `json:"fact_check_enabled"`
+		ShowMediaSource    *bool    `json:"show_media_source"`
 	}
 	if err := decode(w, r, &input); err != nil {
 		failure(w, 400, err.Error())
@@ -292,7 +295,18 @@ func (a *API) revision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	id, err := a.Store.enqueueRevision(r.Context(), videos[0].ID, articles, input.Script, input.RepairFailedScenes, input.MediaIDs)
+	factCheck := videos[0].FactCheckEnabled
+	if input.FactCheckEnabled != nil {
+		factCheck = *input.FactCheckEnabled
+	}
+	if input.RepairFailedScenes {
+		factCheck = true
+	}
+	showSource := videos[0].ShowMediaSource
+	if input.ShowMediaSource != nil {
+		showSource = *input.ShowMediaSource
+	}
+	id, err := a.Store.enqueueRevision(r.Context(), videos[0].ID, articles, input.Script, input.RepairFailedScenes, factCheck, showSource, input.MediaIDs)
 	if err != nil {
 		a.internal(w, err)
 		return
@@ -383,14 +397,21 @@ func (a *API) generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		ArticleIDs []int64  `json:"article_ids"`
-		MediaIDs   []string `json:"media_ids"`
+		ArticleIDs       []int64  `json:"article_ids"`
+		MediaIDs         []string `json:"media_ids"`
+		FactCheckEnabled *bool    `json:"fact_check_enabled"`
+		ShowMediaSource  *bool    `json:"show_media_source"`
 	}
 	if err := decode(w, r, &input); err != nil {
 		failure(w, 400, err.Error())
 		return
 	}
-	id, err := a.Store.Enqueue(r.Context(), input.ArticleIDs, input.MediaIDs)
+	factCheck := true
+	if input.FactCheckEnabled != nil {
+		factCheck = *input.FactCheckEnabled
+	}
+	showSource := input.ShowMediaSource != nil && *input.ShowMediaSource
+	id, err := a.Store.enqueue(r.Context(), input.ArticleIDs, nil, nil, false, factCheck, showSource, input.MediaIDs)
 	if err != nil {
 		failure(w, 400, "chọn 1–6 ID bài viết có thật và không trùng")
 		return

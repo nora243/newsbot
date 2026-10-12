@@ -52,7 +52,7 @@ func (a *AI) RepairScenes(ctx context.Context, articles []Article, original Scri
 	var response struct {
 		Scenes []sceneRepair `json:"scenes"`
 	}
-	err = a.structured(ctx, "scene_repair", sceneRepairPrompt, map[string]any{"articles": articles, "script": original, "fact_check": check, "failed_scene_indices": indices}, object(map[string]any{"scenes": array(patch)}), &response)
+	err = a.structured(ctx, "scene_repair", sceneRepairPrompt, map[string]any{"articles": compactArticles(articles), "script": original, "fact_check": check, "failed_scene_indices": indices}, object(map[string]any{"scenes": array(patch)}), &response)
 	if err != nil {
 		return original, err
 	}

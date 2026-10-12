@@ -266,8 +266,12 @@ func TestStoreIntegration(t *testing.T) {
 	if err = s.Migrate(ctx, "../../migrations"); err != nil {
 		t.Fatal(err)
 	}
+	migrationFiles, err := filepath.Glob("../../migrations/*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var migrationCount int
-	if err = s.DB.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil || migrationCount != 5 {
+	if err = s.DB.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil || migrationCount != len(migrationFiles) {
 		t.Fatalf("migration ledger: %d %v", migrationCount, err)
 	}
 	changedDir := t.TempDir()
@@ -334,7 +338,7 @@ func TestStoreIntegration(t *testing.T) {
 	if err = s.Finish(ctx, j, "", 0, fmt.Errorf("transient")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.DB.Exec(ctx, `UPDATE jobs SET available_at=now() WHERE video_id=$1`, id); err != nil {
+	if _, err = s.DB.Exec(ctx, `UPDATE jobs SET status='queued',available_at=now() WHERE video_id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
 	j2, err := s.ClaimJob(ctx)
@@ -433,7 +437,7 @@ func TestStoreIntegration(t *testing.T) {
 	}
 
 	// Expired leases are reclaimed, and final-attempt crashes reach failed.
-	if _, err = s.DB.Exec(ctx, `UPDATE jobs SET available_at=now() WHERE video_id=$1`, blockedID); err != nil {
+	if _, err = s.DB.Exec(ctx, `UPDATE jobs SET status='queued',available_at=now() WHERE video_id=$1`, blockedID); err != nil {
 		t.Fatal(err)
 	}
 	second, err := s.ClaimJob(ctx)

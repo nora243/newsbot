@@ -14,9 +14,16 @@ async function proxy(request: Request, context: { params: Promise<{ path: string
   const range = request.headers.get("range"); if (range) headers.Range = range;
   let body;
   if (!readOnly) {
+    if (path === "media/upload") {
+      const length = Number(request.headers.get("content-length"));
+      if (length > 105906176) return Response.json({ error: "Tệp quá lớn (tối đa 100 MB)" }, { status: 413 });
+      body = request.body;
+      headers["Content-Type"] = request.headers.get("content-type") || "";
+    } else {
     body = await request.text();
     if (new TextEncoder().encode(body).length > (path === "sources/import" ? 1048576 : 32768)) return Response.json({ error: "Yêu cầu quá lớn" }, { status: 413 });
     headers["Content-Type"] = "application/json";
+    }
   }
   const articleParams = new URLSearchParams();
   if ((path === "articles" || path === "videos") && readOnly) {
@@ -28,7 +35,7 @@ async function proxy(request: Request, context: { params: Promise<{ path: string
   const query = articleParams.size ? `?${articleParams}` : "";
   try {
     const upstream = await fetch(`${(process.env.API_INTERNAL_URL || "http://127.0.0.1:8080").replace(/\/$/, "")}/api/${path}${query}`, {
-      method: request.method, headers, body, cache: "no-store", redirect: "error", signal: AbortSignal.timeout(path.startsWith("media/") ? 180000 : 45000),
+      ...(path === "media/upload" ? { duplex: "half" } : {}), method: request.method, headers, body, cache: "no-store", redirect: "error", signal: AbortSignal.timeout(path === "media/upload" ? 300000 : path.startsWith("media/") ? 180000 : 45000),
     });
     const resultHeaders = new Headers({ "Cache-Control": "no-store" });
     for (const key of ["content-type", "content-length", "content-range", "accept-ranges", "content-disposition"]) {

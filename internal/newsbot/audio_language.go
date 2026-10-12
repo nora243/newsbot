@@ -17,6 +17,7 @@ func (*AudioLanguageError) Permanent() bool { return true }
 // Verify the actual audio without exposing expected text: this reduces the risk of
 // the checker copying narration instead of recognizing what was spoken.
 func (a *AI) verifyVietnameseAudio(ctx context.Context, audio []byte) (bool, error) {
+	ctx = context.WithValue(ctx, aiOperationKey{}, "audio_language_check")
 	p := a.Config.Google
 	model := a.Config.GoogleAudioCheckModel
 	if model == "" {

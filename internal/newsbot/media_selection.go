@@ -24,6 +24,7 @@ type MediaAsset struct {
 	Kind         string   `json:"kind"`
 	SourceName   string   `json:"source_name"`
 	ArticleTitle string   `json:"article_title"`
+	Uploaded     bool     `json:"uploaded"`
 	Candidates   []string `json:"-"`
 }
 type ResolvedMedia struct {
@@ -107,7 +108,7 @@ func mediaGroups(data []byte, page string) []MediaAsset {
 func (s *Store) Asset(ctx context.Context, id string) (MediaAsset, error) {
 	var m MediaAsset
 	var raw []byte
-	err := s.DB.QueryRow(ctx, `SELECT m.id,m.article_id,m.kind,m.candidates,s.name,a.title FROM media_assets m JOIN news_articles a ON a.id=m.article_id JOIN news_sources s ON s.id=a.source_id WHERE m.id=$1`, id).Scan(&m.ID, &m.ArticleID, &m.Kind, &raw, &m.SourceName, &m.ArticleTitle)
+	err := s.DB.QueryRow(ctx, `SELECT m.id,m.article_id,m.kind,m.candidates,m.uploaded,CASE WHEN m.uploaded THEN 'Tải lên' ELSE s.name END,CASE WHEN m.uploaded THEN m.upload_name ELSE a.title END FROM media_assets m JOIN news_articles a ON a.id=m.article_id JOIN news_sources s ON s.id=a.source_id WHERE m.id=$1`, id).Scan(&m.ID, &m.ArticleID, &m.Kind, &raw, &m.Uploaded, &m.SourceName, &m.ArticleTitle)
 	if err == nil {
 		err = json.Unmarshal(raw, &m.Candidates)
 	}
@@ -207,13 +208,13 @@ func (a *API) discoverMedia(w http.ResponseWriter, r *http.Request) {
 				for id := range currentIDs {
 					keepIDs = append(keepIDs, id)
 				}
-				if _, err = a.Store.DB.Exec(ctx, `DELETE FROM media_assets WHERE article_id=$1 AND NOT (id=ANY($2))`, article.ID, keepIDs); err != nil {
+				if _, err = a.Store.DB.Exec(ctx, `DELETE FROM media_assets WHERE article_id=$1 AND NOT uploaded AND NOT (id=ANY($2))`, article.ID, keepIDs); err != nil {
 					a.internal(w, err)
 					return
 				}
 			}
 		}
-		rows, e := a.Store.DB.Query(ctx, `SELECT id,kind FROM media_assets WHERE article_id=$1 ORDER BY created_at,id`, article.ID)
+		rows, e := a.Store.DB.Query(ctx, `SELECT id,kind,uploaded,upload_name FROM media_assets WHERE article_id=$1 ORDER BY created_at,id`, article.ID)
 		if e != nil {
 			a.internal(w, e)
 			return
@@ -221,8 +222,13 @@ func (a *API) discoverMedia(w http.ResponseWriter, r *http.Request) {
 		count := 0
 		for rows.Next() {
 			m := MediaAsset{ArticleID: article.ID, SourceName: article.SourceName, ArticleTitle: article.Title}
-			if e = rows.Scan(&m.ID, &m.Kind); e != nil {
+			if e = rows.Scan(&m.ID, &m.Kind, &m.Uploaded, &m.ArticleTitle); e != nil {
 				break
+			}
+			if m.Uploaded {
+				m.SourceName = "Tải lên"
+			} else {
+				m.ArticleTitle = article.Title
 			}
 			assets = append(assets, m)
 			count++
@@ -271,6 +277,9 @@ func materializeMedia(ctx context.Context, base string, m MediaAsset) (ResolvedM
 			result.Duration, err = probe(ctx, dir, result.Path)
 		}
 		return result, err
+	}
+	if m.Uploaded {
+		return result, fmt.Errorf("tệp tải lên không còn trên máy chủ")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 150*time.Second)
 	defer cancel()

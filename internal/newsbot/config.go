@@ -98,7 +98,7 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return c, fmt.Errorf("GOOGLE_VOICE_DESIGN phải là true/false")
 	}
-	c.GoogleVerifyVietnamese, err = strconv.ParseBool(env("GOOGLE_VERIFY_VIETNAMESE", "true"))
+	c.GoogleVerifyVietnamese, err = strconv.ParseBool(env("GOOGLE_VERIFY_VIETNAMESE", "false"))
 	if err != nil {
 		return c, fmt.Errorf("GOOGLE_VERIFY_VIETNAMESE phải là true/false")
 	}

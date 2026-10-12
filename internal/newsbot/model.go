@@ -45,6 +45,7 @@ type Scene struct {
 	ClaimIDs  []string `json:"claim_ids"`
 }
 type Script struct {
+	Category      string   `json:"category,omitempty"`
 	Title         string   `json:"title"`
 	Summary       string   `json:"summary"`
 	Uncertainties []string `json:"uncertainties"`
@@ -72,6 +73,18 @@ func (*InsufficientSourceError) Permanent() bool { return true }
 
 // Validate checks provenance, not truth. Editorial review is still required.
 func (s Script) Validate(articles []Article) error {
+	if s.Category != "" {
+		valid := false
+		for _, category := range speechCategories {
+			if category == s.Category {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("chủ đề giọng đọc không hợp lệ: %s", s.Category)
+		}
+	}
 	if s.Claims != nil && s.Scenes != nil && len(s.Claims) == 0 && len(s.Scenes) == 0 {
 		return &InsufficientSourceError{}
 	}
@@ -117,6 +130,10 @@ func (s Script) Validate(articles []Article) error {
 	return nil
 }
 
+type FactCheckError struct{ message string }
+
+func (e *FactCheckError) Error() string { return e.message }
+func (*FactCheckError) Permanent() bool { return true }
 func (f FactCheck) Validate(n int) error {
 	if len(f.Scenes) != n {
 		return fmt.Errorf("fact checker chưa kiểm tra đủ các cảnh")
@@ -124,7 +141,7 @@ func (f FactCheck) Validate(n int) error {
 	seen := map[int]bool{}
 	for _, c := range f.Scenes {
 		if c.SceneIndex < 0 || c.SceneIndex >= n || seen[c.SceneIndex] || !c.Supported {
-			return fmt.Errorf("cảnh %d chưa được nguồn hỗ trợ: %s", c.SceneIndex+1, c.Reason)
+			return &FactCheckError{message: fmt.Sprintf("cảnh %d chưa được nguồn hỗ trợ: %s", c.SceneIndex+1, c.Reason)}
 		}
 		seen[c.SceneIndex] = true
 	}

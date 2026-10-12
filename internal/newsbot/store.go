@@ -93,13 +93,13 @@ func (s *Store) SearchArticles(ctx context.Context, query string, sourceIDs []in
 	return out, rows.Err()
 }
 func (s *Store) Enqueue(ctx context.Context, ids []int64, media ...[]string) (string, error) {
-	return s.enqueue(ctx, ids, nil, nil, false, media...)
+	return s.enqueue(ctx, ids, nil, nil, false, true, false, media...)
 }
 
 func (s *Store) EnqueueRevision(ctx context.Context, parentID string, articles []Article, draft Script, media ...[]string) (string, error) {
-	return s.enqueueRevision(ctx, parentID, articles, draft, false, media...)
+	return s.enqueueRevision(ctx, parentID, articles, draft, false, true, false, media...)
 }
-func (s *Store) enqueueRevision(ctx context.Context, parentID string, articles []Article, draft Script, repair bool, media ...[]string) (string, error) {
+func (s *Store) enqueueRevision(ctx context.Context, parentID string, articles []Article, draft Script, repair bool, factCheck bool, showSource bool, media ...[]string) (string, error) {
 	if err := draft.Validate(articles); err != nil {
 		return "", err
 	}
@@ -111,10 +111,10 @@ func (s *Store) enqueueRevision(ctx context.Context, parentID string, articles [
 	if err != nil {
 		return "", err
 	}
-	return s.enqueue(ctx, ids, data, &parentID, repair, media...)
+	return s.enqueue(ctx, ids, data, &parentID, repair, factCheck, showSource, media...)
 }
 
-func (s *Store) enqueue(ctx context.Context, ids []int64, draft []byte, parentID *string, repair bool, media ...[]string) (string, error) {
+func (s *Store) enqueue(ctx context.Context, ids []int64, draft []byte, parentID *string, repair bool, factCheck bool, showSource bool, media ...[]string) (string, error) {
 	if len(ids) == 0 || len(ids) > 6 {
 		return "", fmt.Errorf("chọn 1–6 bài viết cùng sự kiện")
 	}
@@ -138,7 +138,7 @@ func (s *Store) enqueue(ctx context.Context, ids []int64, draft []byte, parentID
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `INSERT INTO videos(id,parent_id,draft_script,script,media_ids,repair_failed_scenes) VALUES($1,$2,$3,$3,$4,$5)`, id, parentID, draft, mediaJSON, repair); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO videos(id,parent_id,draft_script,script,media_ids,repair_failed_scenes,fact_check_enabled,show_media_source) VALUES($1,$2,$3,$3,$4,$5,$6,$7)`, id, parentID, draft, mediaJSON, repair, factCheck, showSource); err != nil {
 		return "", err
 	}
 	for _, aid := range ids {
@@ -280,18 +280,20 @@ func (s *Store) Reap(ctx context.Context) error {
 }
 
 type Video struct {
-	MediaIDs       []string        `json:"media_ids"`
-	PostingCaption string          `json:"posting_caption"`
-	ParentID       *string         `json:"parent_id"`
-	ID             string          `json:"id"`
-	Status         string          `json:"status"`
-	Script         json.RawMessage `json:"script"`
-	FactCheck      json.RawMessage `json:"fact_check"`
-	OutputPath     *string         `json:"-"`
-	Duration       *float64        `json:"duration_seconds"`
-	LastError      *string         `json:"last_error"`
-	CreatedAt      time.Time       `json:"created_at"`
-	Sources        []Article       `json:"sources,omitempty"`
+	ShowMediaSource  bool            `json:"show_media_source"`
+	FactCheckEnabled bool            `json:"fact_check_enabled"`
+	MediaIDs         []string        `json:"media_ids"`
+	PostingCaption   string          `json:"posting_caption"`
+	ParentID         *string         `json:"parent_id"`
+	ID               string          `json:"id"`
+	Status           string          `json:"status"`
+	Script           json.RawMessage `json:"script"`
+	FactCheck        json.RawMessage `json:"fact_check"`
+	OutputPath       *string         `json:"-"`
+	Duration         *float64        `json:"duration_seconds"`
+	LastError        *string         `json:"last_error"`
+	CreatedAt        time.Time       `json:"created_at"`
+	Sources          []Article       `json:"sources,omitempty"`
 }
 
 func (s *Store) Videos(ctx context.Context, id string, filters ...string) ([]Video, error) {
@@ -302,7 +304,7 @@ func (s *Store) Videos(ctx context.Context, id string, filters ...string) ([]Vid
 	if len(filters) > 1 {
 		status = filters[1]
 	}
-	rows, err := s.DB.Query(ctx, `SELECT id,status,script,fact_check,output_path,duration_seconds,last_error,created_at,parent_id,media_ids FROM videos WHERE ($1='' OR id=$1) AND ($2='' OR strpos(lower(COALESCE(script->>'title','')),lower($2))>0) AND ($3='' OR status=$3) ORDER BY created_at DESC LIMIT 100`, id, query, status)
+	rows, err := s.DB.Query(ctx, `SELECT id,status,script,fact_check,output_path,duration_seconds,last_error,created_at,parent_id,media_ids,fact_check_enabled,show_media_source FROM videos WHERE ($1='' OR id=$1) AND ($2='' OR strpos(lower(COALESCE(script->>'title','')),lower($2))>0) AND ($3='' OR status=$3) ORDER BY created_at DESC LIMIT 100`, id, query, status)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +312,7 @@ func (s *Store) Videos(ctx context.Context, id string, filters ...string) ([]Vid
 	out := []Video{}
 	for rows.Next() {
 		var v Video
-		if err = rows.Scan(&v.ID, &v.Status, &v.Script, &v.FactCheck, &v.OutputPath, &v.Duration, &v.LastError, &v.CreatedAt, &v.ParentID, &v.MediaIDs); err != nil {
+		if err = rows.Scan(&v.ID, &v.Status, &v.Script, &v.FactCheck, &v.OutputPath, &v.Duration, &v.LastError, &v.CreatedAt, &v.ParentID, &v.MediaIDs, &v.FactCheckEnabled, &v.ShowMediaSource); err != nil {
 			return nil, err
 		}
 		var script Script

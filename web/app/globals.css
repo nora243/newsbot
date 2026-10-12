@@ -65,3 +65,5 @@
 .article-controls .toolbar{flex-wrap:wrap}
 .article-meta{align-items:center;flex-wrap:wrap}
 .article-meta .article-used{background:#e7f5ed;color:#207047;font-size:10px;padding:3px 8px}
+
+.fact-check-option{padding:12px 24px;margin:0;font-size:13px;border-bottom:1px solid var(--line)}
